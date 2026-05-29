@@ -1,0 +1,39 @@
+/* things to be added to /usr/sys/master.d/kernel.h for support of the
+   MAX-125/IBM serial I/O boards (lines tagged with "jck")
+*/
+
+/*---------------------------------------------------------------------------*/
+
+/* Miscellaneous kernel data */
+
+extern void mxtxintr();		/* jck MAX-125 */
+
+void	(*int2_tbl[])() = {	/* ttrap.s pint2: */
+	aciaaintr,		/* ACIAA (parallel/kbd/clk) ISR */
+	jbintr,			/* A2090 ISR */
+	a2091intr,		/* A2091 ISR */
+	a3091intr,		/* A3000 internal SCSI ISR */
+	aenintr,		/* A2065 Ethernet ISR */
+	mxtxintr,		/* jck MAX-125 IBM serial I/O ISR xmit server */
+	0};
+
+/*---------------------------------------------------------------------------*/
+
+/* poll at 16.667 ms clock rate */
+extern void qlintr(), slpoll(), mxpoll();
+void	(*io_poll[])() = {
+	mxpoll,		/* jck MAX-125 IBM serial I/O polling & rx buf flush */
+	qlintr,
+	slpoll,
+	0};
+
+/*---------------------------------------------------------------------------*/
+
+extern struct streamtab mxinfo;		/* jck MAX-125 */
+
+/*---------------------------------------------------------------------------*/
+/* placed in struct cdevsw cdevsw[] = {	 at major 47 */
+
+ND,ND,ND,ND,ND,ND,ND,ND,ND,ND,notty,&mxinfo,nullflag,	/* 47 jck MAX-125 */
+
+/*---------------------------------------------------------------------------*/

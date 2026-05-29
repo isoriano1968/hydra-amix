@@ -1,0 +1,94 @@
+
+
+%{
+#include	"as65.h"
+#include	"expr.h"
+%}
+
+
+%union {
+	struct expr	*expr;
+	uint		num;
+	char		*str;
+}
+
+%type	<expr>	expr
+%token	<num>	CONSTANT
+%token	<num>	SYMBOL
+%token	<str>	STRING
+%token		SEGMENT
+%token		BLOCK
+%token		BYTE
+%token		WORD
+%token		LSHIFT
+%token		RSHIFT
+%token		A
+%token		X
+%token		Y
+
+/* INSERTION1 -- tokens for the 6502 instructions */
+
+
+%%
+
+
+program		: program statement '\n'	{ ++lineno; }
+		| statement '\n'		{ ++lineno; }
+		;
+statement	: SEGMENT expr			{ segcreate( $2); }
+		| label operation
+		;
+label		: SYMBOL ':'			{ sdefine( $1); }
+		| CONSTANT ':'			{ ldefine( $1); }
+		|
+		;
+operation	: '#' SYMBOL expr STRING	{ lsetlineno( $3); }
+		| '#' SYMBOL expr		{ lsetlineno( $3); }
+		| BLOCK expr			{ cblock( $2); }
+		| BYTE
+		| BYTE bytedata
+		| WORD
+		| WORD worddata
+
+		/* INSERTION2 -- rules for the 6502 instructions */
+
+		|
+		;
+bytedata	: bytedata ',' expr		{ cdata1( $3); }
+		| expr				{ cdata1( $1); }
+		;
+worddata	: worddata ',' expr		{ cdata2( $3); }
+		| expr				{ cdata2( $1); }
+		;
+expr		: shift				{ $$ = expression( ); }
+		;
+shift		: shift LSHIFT term		{ efunction( '<<'); }
+		| shift RSHIFT term		{ efunction( '>>'); }
+		| term
+		;
+term		: term '+' factor		{ efunction( '+'); }
+		| term '-' factor		{ efunction( '-'); }
+		| factor
+		;
+factor		: factor '*' unary		{ efunction( '*'); }
+		| factor '/' unary		{ efunction( '/'); }
+		| unary
+		;
+unary		: '-' unary			{ efunction( 'n'); }
+		| primary
+		;
+primary		: '(' shift ')'
+		| SYMBOL			{ esymbol( $1); }
+		| CONSTANT			{ econstant( $1); }
+		;
+
+
+%%
+
+
+static
+yyerror( )
+{
+
+	croak( "syntax error, line %d", lineno);
+}

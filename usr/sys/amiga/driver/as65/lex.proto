@@ -1,0 +1,196 @@
+
+
+#include	<ctype.h>
+#include	"as65.h"
+#include	"y.tab.h"
+#include	"expr.h"
+
+
+static void
+	badnumber( );
+
+uint	lineno	= 1;
+
+static struct {
+	uint	token;
+	char	*name;
+} tnames[] = {
+	SEGMENT,".seg",
+	BLOCK,	".block",
+	BYTE,	".byte",
+	WORD,	".word",
+	A,	"a",
+	X,	"x",
+	Y,	"y",
+
+	/* INSERTION1 -- names of the 6502 instructions */
+
+};
+
+
+yylex( )
+{
+	uint	n,
+		r;
+	int	c,
+		d;
+	char	a[99],
+		*p;
+
+	loop {
+		c = getchar( );
+		if (c == EOF)
+			return (EOF);
+		if (not isspace( c))
+			break;
+		if (c == '\n')
+			return (c);
+	}
+	if (isdigit( c)) {
+		n = c - '0';
+		c = getchar( );
+		if (c == EOF)
+			return (EOF);
+		if ((c == 'b')
+		or (c == 'f')) {
+			d = getchar( );
+			if (d == EOF)
+				return (EOF);
+			if (isalnum( d))
+				croak( "bad local label, line %d", lineno);
+			ungetc( d, stdin);
+			yylval.num = lrefer( n, c);
+			return (SYMBOL);
+		}
+		r = 10;
+		if (not n) {
+			r = 8;
+			if (c=='x' || c=='X') {
+				r = 16;
+				c = getchar( );
+				if (c == EOF)
+					return (EOF);
+			}
+			else if (c == 'v') {
+				r = 2;
+				c = getchar( );
+				if (c == EOF)
+					return (EOF);
+			}
+		}
+		loop {
+			if ('0'<=c && c<='9')
+				c -= '0';
+			else if ('A'<=c && c<='F')
+				c -= 'A' - 10;
+			else if ('a'<=c && c<='f')
+				c -= 'a' - 10;
+			else if (isalnum( c))
+				badnumber( );
+			else {
+				ungetc( c, stdin);
+				yylval.num = n;
+				return (CONSTANT);
+			}
+			if (c >= r)
+				badnumber( );
+			n = n*r + c;
+			c = getchar( );
+			if (c == EOF)
+				return (EOF);
+		}
+	}
+	if ((isalnum( c))
+	or (c == '_')
+	or (c == '.')) {
+		p = a;
+		while ((isalnum( c))
+		or (c == '_')
+		or (c == '.')) {
+			*p++ = c;
+			if (p == endof( a))
+				croak( "symbol too long");
+			c = getchar( );
+			if (c == EOF)
+				return (EOF);
+		}
+		ungetc( c, stdin);
+		*p = '\0';
+		for (n=0; n<nel( tnames); ++n)
+			if (streq( a, tnames[n].name))
+				return (tnames[n].token);
+		yylval.num = srefer( a);
+		return (SYMBOL);
+	}
+	if (c == '"') {
+		p = a;
+		loop {
+			c = getchar( );
+			if (c == EOF)
+				return (c);
+			if (c == '"')
+				break;
+			if (c == '\n')
+				croak( "unterminated string, line %d", lineno);
+			*p++ = c;
+			if (p == endof( a))
+				croak( "string too long");
+		}
+		*p = '\0';
+		yylval.str = malloc( strlen( a)+1);
+		if (not yylval.str)
+			nomem( );
+		strcpy( yylval.str, a);
+		return (STRING);
+	}
+	if (c == '<') {
+		c = getchar( );
+		if (c == EOF)
+			return (EOF);
+		if (c == '<')
+			return (LSHIFT);
+		ungetc( c, stdin);
+		return ('<');
+	}
+	if (c == '>') {
+		c = getchar( );
+		if (c == EOF)
+			return (EOF);
+		if (c == '>')
+			return (RSHIFT);
+		ungetc( c, stdin);
+		return ('>');
+	}
+	if (c == '/') {
+		c = getchar( );
+		if (c == EOF)
+			return (EOF);
+		if (c != '/') {
+			ungetc( c, stdin);
+			return ('/');
+		}
+		while (getchar( ) != '\n')
+			if (feof( stdin))
+				return (EOF);
+		return ('\n');
+	}
+	return (c);
+}
+
+
+lsetlineno( expr)
+struct expr	*expr;
+{
+
+	if (not eabsolute( expr))
+		croak( "bogus line number directive");
+	lineno = evaluate( expr) - 1;
+}
+
+
+static void
+badnumber( )
+{
+
+	croak( "invalid number, line %d", lineno);
+}

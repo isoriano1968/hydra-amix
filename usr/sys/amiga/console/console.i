@@ -1,0 +1,11 @@
+
+#
+# ANSI ATTRIBUTE INFORMATION
+#
+define(ATTR_BOLD,1)
+define(ATTR_ITALIC,3)
+define(ATTR_UNDERSCORE,4)
+define(ATTR_BLINK,5)
+define(ATTR_JAM1,6)
+define(ATTR_INVERSE,7)
+define(ATTR_FONT1,8)

@@ -1,0 +1,9 @@
+/*#ident	"@(#)kernel:master.d/icd	1.6"
+*
+* In-Core Disk
+*
+*FLAG	#VEC	PREFIX	SOFT	#DEV	IPL	DEPENDENCIES/VARIABLES
+*sbcn	-	icd	-	1	- 	
+*/
+
+int icdmaj;

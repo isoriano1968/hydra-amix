@@ -1,0 +1,9 @@
+# mapfile for A3000 with 4 Meg of RAM at 0x07c00000
+
+kv_all = LOAD ?RWX V0x07c00000 L0x00400000;
+
+kv_all:.text;
+kv_all:.rodata;
+kv_all:.data;
+kv_all:.bss;
+

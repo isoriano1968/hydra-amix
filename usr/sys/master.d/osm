@@ -1,0 +1,6 @@
+*#ident	"@(#)kernel:master.d/osm	1.2"
+*
+* OSM
+*
+*FLAG	#VEC	PREFIX	SOFT	#DEV	IPL	DEPENDENCIES/VARIABLES
+ocs	-     	  osm	-

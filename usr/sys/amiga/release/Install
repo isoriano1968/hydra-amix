@@ -1,0 +1,37 @@
+INCDIRS=" des fs net netinet nfs rpc sys vm "
+SRCDIRS=" amiga master.d local "
+NOSRCDIRS=" des disp exec fs io klm ktli ml netinet os rpc vm "
+
+set -e
+
+for dir in ${NOSRCDIRS}
+do
+    ( cd $dir; ${MAKE-make} CFLAGS="${CFLAGS}"; )
+done
+
+find ${INCDIRS} -name '*.h' -print | cpio -pdmu ${ROOT-/}usr/include
+
+[ -d ${ROOT-/}usr/sys ] || mkdir ${ROOT-/}usr/sys
+( cd ${ROOT-/}usr/sys; rm -rf * )
+
+{
+    for dir in ${NOSRCDIRS}
+    do
+	echo ${dir}/exp
+    done
+    echo Makefile
+    egrep '^amiga/|^master.d/|^local/' MANIFEST
+} | cpio -pdmu ${ROOT-/}usr/sys
+
+
+cd ${ROOT-/}usr/sys
+
+for dir in ${NOSRCDIRS}
+do
+    echo 'exp:\nclean:\nclobber:' > ${dir}/Makefile
+done
+
+echo 'g/-nostdinc/s///
+w' | ed - Makefile
+
+${MAKE-make}

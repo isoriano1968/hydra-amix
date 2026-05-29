@@ -1,0 +1,124 @@
+INTRODUCTION
+------------
+
+This directory contains the source to the UNIX bootstrap utilities.
+These utilities can be used to produce bootstrap images with either
+relocatable or fully linked kernels.
+
+Because AmigaDOS bootstraps are limited to the first two blocks of
+the boot device, for a maximum size of 1Kb, we use a two level
+bootstrap.  The level 1 boot simply loads the level 2 boot, verifies
+it's checksum, and jumps to it.  If anything goes wrong during the
+load, it puts up a deadend alert.
+
+Note that all code in the level 1 and level 2 boots must be position
+independent.  This is currently handled with a couple of kludges, one
+to change jsr's to bsr's, which are PC relative (only needed when
+trying to use GCC, which currently fails for other reasons).  The other
+kludge is a small assembler routine that computes the relocated value
+of an address, primarily useful for getting the correct address of
+strings.
+
+
+BOOTSTRAP IMAGES
+----------------
+
+A bootstrap image currently has the following structure:
+
+	Boot Offset	Size	Function
+	-----------	----	-------------------------------
+
+	0		0x400	Boot level 1 bootstrap, read by
+				AmigaDOS and executed like any
+				normal AmigaDOS bootstrap.
+
+	0x400		0x200	Boot level 2 information block.
+				Contains size and checksum of level
+				2 boot.
+
+	0x600		var	Level 2 bootstrap, variable length.
+				Loaded and jumped to by level 1
+				bootstrap.
+
+	var		0x200	Kernel information block.  Contains
+				size, checksum, and prefered load
+				address of the ELF kernel file.
+
+	var		var	ELF kernel file, either relocatable
+				or fully linked.  Loaded and jumped
+				to by level 2 bootstrap.
+
+
+CHECKSUMS
+---------
+
+Note that the level 1 boot checksum must be a valid AmigaDOS checksum,
+and the system will expect it to be valid.  The level 2 boot also contains
+a valid AmigaDOS checksum, but it is ignored.  Instead, the SVR4 "sum"
+compatible checksum, stored in the info block, is used to validate the
+level 2 boot.  Similarly, the checksum stored in the kernel info block
+is used to validate the kernel file.
+
+If the level 1 boot AmigaDOS checksum is incorrect, the system will not
+attempt to boot from it.  If the level 2 boot SVR4 checksum is incorrect,
+the level 1 bootstrap will post a deadend alert.  If the ELF kernel file
+SVR4 checksum is incorrect, the level 2 bootstrap will post a recoverable
+alert warning that the checksum does not match the expected one.  Pressing
+any mouse button will allow the boot to attempt to continue.
+
+
+RELOCATABLE KERNELS
+-------------------
+
+If the kernel file loaded by the level 2 bootstrap is relocatable, the
+level 2 bootstrap will perform the necessary relocation at boot time.
+This can result in a noticable delay during boot, on the order of 15
+seconds or more.
+
+If the kernel info block contains a preferred load address, the relocation
+is done to that address and an attempt is made to load and run the kernel
+at the desired address.  This is designed to allow testing of various
+load addresses by simply changing the info block, rather than relinking
+the kernel.  The default load address in the info block is 0xFFFFFFFF,
+which indicates to the level 2 bootstrap that it should do automatic
+binding, by scanning the system's memory list and picking a suitable
+relocation address (currently the largest chunk of contiguous, non-CHIP
+memory).  If the kernel is not relocatable, the preferred load address
+is simply ignored.
+
+
+MULTIVOLUME BOOT IMAGES
+-----------------------
+
+If the boot image is larger than will fit on a single floppy, the boot
+image can be split among as many floppies as necessary.  The level 1
+bootstrap knows the expected size of the kernel file, and will prompt for
+additional volumes as necessary, using a recoverable alert.
+
+
+COMPRESSION
+-----------
+
+The boot code is capable of loading compressed kernels, I.E. kernels
+which have been compressed by the standard public domain "compress"
+utility, using LZW compression with 12 to 16 bits.  The makeiblk utility
+automatically recognizes that the kernel is compressed (from the compress
+magic number) and sets the appropriate fields in the IBLK so the boot
+code will know how much space the decompressed kernel will require.  The
+decompression is done as the kernel is read from the boot device, and
+the decompressed data is written directly to the kernel memory buffer.
+Decompression can be painfully slow on anything less than a 68030
+based machine.
+
+
+COMPACT RELOCATION
+------------------
+
+In order to squeeze even larger kernels on a single boot floppy, a
+special form of ELF file can be generated using the elf2brel utility.
+This utility takes a standard ELF relocatable file and turns it into
+an ELF file with some custom relocation tables.  The resulting file
+is still a well-formed ELF file, it is just no longer usable by
+the standard utilities as a relocatable file.  This custom form is
+about 40% smaller than a normal ELF relocatable, and is still fully
+relocatable by the kernel boot code.

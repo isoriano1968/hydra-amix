@@ -1,0 +1,82 @@
+# Patchlevel: README_1.1
+
+The mx driver allows several IBM style serial I/O port boards connected to the
+Palomax, Inc. MAX-125 interface adapter to operate under s5r4 UNIX.
+Up to 8 serial ports can be added.
+
+
+To integrate the mx drivers into the kernel:
+
+log in as bin.
+
+
+Make the mx directory (/usr/sys/amiga/driver/mx) and copy all of the files
+in this directory to it.
+
+Read the beginning of the mx.c file for information on configuring mx.c for
+the particular IBM serial port board(s) you will be using.
+
+The Makefl.mx.mod file contains lines tagged with "jck" to be integratred into the
+/usr/sys/amiga/driver/Makefile.  (make a backup copy of the original first)
+
+The kernel.c.mx file contains lines tagged with "jck" to be integratred into the
+/usr/sys/master.d/kernel.c file.  (make a backup copy of the original first)
+
+The ttrap.s file contains lines tagged with "jck" to be integratred into the
+/usr/sys/amiga/ml/ttrap.s file.  (make a backup copy of the original first)
+
+The Makefile builds the mx driver exp object.
+
+
+Remove the following files:
+/usr/sys/master.d/exp
+/usr/sys/amiga/ml/exp
+/usr/sys/amiga/driver/mx/exp	(when you rebuild mx)
+
+
+login as root
+
+from /usr/sys:
+make   to make the new system
+then:
+make bootfloppy    to placing it on a floppy for testing
+or:
+make install     to place it on the hard disk for booting
+
+
+make the following mx device nodes:
+mknod /dev/term/mx0 c 47 0
+mknod /dev/term/mx1 c 47 1
+mknod /dev/term/mx2 c 47 2
+mknod /dev/term/mx3 c 47 3
+mknod /dev/term/mx4 c 47 4
+mknod /dev/term/mx5 c 47 5
+mknod /dev/term/mx6 c 47 6
+mknod /dev/term/mx7 c 47 7
+
+chmod 666 /dev/term/mx*
+
+
+modify /etc/amiga.ap and add the entries like that of the current devices
+for login ports.
+
+# major  minor lastminor   modules
+    47     0       7       ldterm   ttcompat
+
+
+add the mx? ports to /etc/saf/serial/_pmtab using pmadm, etc.
+
+
+reboot the new unix and your new ports should be working.
+
+
+Updates may be made available from time to time.  Give me a call between
+7:00pm and 10:00pm Eastern Standard Time to find out about availability.
+
+Jack Koehler
+Palomax, Inc.
+424 Moreboro Road
+Hatboro, PA  19040-3932
+USA
+
+215-672-6815

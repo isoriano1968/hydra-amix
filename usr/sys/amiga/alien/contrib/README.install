@@ -1,0 +1,73 @@
+  Installation instructions for /usr/sys/amiga/alien/contrib/viper.sh
+  -------------------------------------------------------------------
+
+  Do not proceed if you have a tape drive already supported under
+  AmigaUNIX, such as the Commodore A3070, Caliper, Wangtek, or Sankyo.
+  
+  To install an experimental, unsupported tape driver for the Archive
+  Viper 2150S tape drive (and possibly other tape drives):
+  
+    # cd /usr/sys/amiga/alien
+    # cp ct.c tape.c
+    # sh viper.sh
+    # patch <tape.diffs
+    # mv tctl /usr/public/bin
+  
+  To try another experimental program, ioctl, add these steps:
+  
+    # patch -p <kernel.diffs
+    # make ioctl
+    # mv ioctl /usr/public/bin
+  
+  Then build a kernel with the new driver in /usr/sys:
+  
+    # cd /usr/sys
+    # make
+  
+  Finally, insert a formatted, blank floppy in its drive, and make
+  a boot floppy with the new kernel so you can see whether it works
+  with the tape drive:
+
+    # cd /stand
+    # mv unix unix.orig
+    # cp /usr/sys/unix .
+    # make floppy  (Make a boot floppy, boot it, and test tape drive.)
+
+  If you're happy with the way the new tape driver works, the following
+  will install the new kernel onto the boot partition of your hard drive:
+
+    # cd /stand
+    # make
+--------------------
+  If you must place your original hard drive boot kernel back into the
+  boot partition at some point, use the following:
+
+    # cd /stand
+    # ln 2.03_unix unix
+    # make
+--------------------
+  If you must do so from the boot floppy of the installation disks
+it is quite easy.
+
+  Answer the question that selects a keyboard.  The question "Do you
+want to repair or install?" will appear.  Say "repair".  If necessary,
+press ctrl-D, wait, and press ctrl-D again until this question appears
+and you successfully answer "repair".
+
+  The script will ask which hard drive to "repair", which partitions
+are the root, swap and boot partitions.  You must type "y" if the
+script offers to fsck (check) the root partition.  When the # prompt
+appears your hard drive is mounted as /mnt.  It will tell you:
+
+   Running interactive shell...
+   Log out with ctrl-D when you are finished.
+
+At the # prompt, type in these commands to replace your original kernel:
+
+    # cd /mnt/stand
+    # ln 2.03_unix unix
+    # make
+
+  When that's done, log out with ctrl-D.  After the "system is halted"
+message is displayed, eject the floppy and use Ctrl-Amiga-Amiga to
+reboot...

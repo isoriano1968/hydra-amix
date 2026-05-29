@@ -1,0 +1,21 @@
+# add the line marked "jck" to /usr/sys/amiga//ml/ttrap.s for MAX-125 mx driver
+
+	global	p6int
+p6int:					# Vector address 78
+	movm.l	&0xfffe,-(%sp)		# Save registers
+	mov.l	sup_cacr,%d0		# Switch cache mode to supervisor
+	mov.l	%d0,%cacr
+
+	mov.w	0xDFF01E,%d0		# Valid interrupt?
+	and.w	&0x2000,%d0		#
+	beq	intret			# No
+	mov.w	%d0,0xDFF09C		# Dismiss
+
+	mov.l	&0,-(%sp)		# Fake USP to make a pcb structure
+	pea	(%sp)			# Pass POINTER to pcb to aciabintr
+	jsr	aciabintr		# Call ACIAB handler
+	jsr	mxintr			# jck call mx handler for MAX-125
+	add.l	&8,%sp
+
+#	bra	intret			# And return
+

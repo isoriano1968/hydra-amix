@@ -1,0 +1,5 @@
+trap 'rm X$$' 0 1 2 3 15
+set -e
+make $1.o writekmap.o
+${CC-cc} -o X$$ $1.o writekmap.o
+./X$$ > $1

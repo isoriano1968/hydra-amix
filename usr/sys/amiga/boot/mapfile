@@ -1,0 +1,11 @@
+# A mapfile for generating a boot image.  Generate a single segment
+# named "boot", and collect all text, data, and bss in that segment,
+# starting at virtual address 0xC, with data immediately after text.
+# Patchlevel: mapfile_1.1
+
+boot = LOAD ?RWX V0x0000000C L0x010003F4;
+
+boot:.text;
+boot:.rodata;
+boot:.data;
+boot:.bss;
