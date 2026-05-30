@@ -125,6 +125,6 @@
 #define NE8390_TX_PAGES  6
 #define NE8390_RX_START_PG (NE8390_START_PG + NE8390_TX_PAGES)
 
-#define NE8390_BOARD_ID 0x21210001
+#define NE8390_BOARD_ID 0x041D0001	/* manufacturer 1053, product 1 */
 
 #endif
