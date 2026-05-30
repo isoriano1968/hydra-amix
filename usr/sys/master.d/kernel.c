@@ -37,8 +37,6 @@
 extern void fpuinit(),cinit(),binit(),inoinit(),vfsinit(),finit();
 extern void strinit(),msginit(),seminit(),sadinit();
 extern void tclinit(),tcoinit(),tcooinit();
-extern void hydra_test_init();
-extern void hydraautoconfig();
 #ifdef KERNEL_DEBUGGER
 extern void kdb_init_hooks();
 #endif /* KERNEL_DEBUGGER */
@@ -57,8 +55,6 @@ void	(*init_tbl[])() = {
 	tclinit,
 	tcoinit,
 	tcooinit,
-	hydra_test_init,
-	hydraautoconfig,
 #ifdef KERNEL_DEBUGGER
 	kdb_init_hooks,
 #endif /* KERNEL_DEBUGGER */
@@ -186,12 +182,6 @@ int Dstflag;
 
 /* head of inet statistics list */
 int ifstats;
-
-int hydra_debug = {0xDEADBEEF};
-#include "sys/cmn_err.h"
-void hydra_test_init() { cmn_err(CE_NOTE, "hydra_debug = 0x%x", hydra_debug); }
-
-/* Miscellaneous kernel data */
 
 extern void aciaaintr(), jbintr(), a2091intr(), a3091intr(), aenintr(), hydraintr();
 void	(*int2_tbl[])() = {
