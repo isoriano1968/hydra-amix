@@ -844,7 +844,8 @@ hydraintr()
     {
 	hydra_board_t *board = &hydra_board[board_index];
 
-	if (board->hydra_status.board_state == HYDRA_BOARD_RUNNING)
+	if (board->hydra_status.board_state == HYDRA_BOARD_RUNNING &&
+	    board->hydra_info.nic_base != 0)
 	{
 	    volatile unsigned char *nic = board->hydra_info.nic_base;
 
@@ -1207,76 +1208,144 @@ unsigned char physical_ethernet_address[6];
 void
 hydraautoconfig()
 {
-    register long y;
-    register int i, w, x, z, hit;
-    long dummy;
+    int i, slot, n;
+    long addr, size;
     static int hydraautoconfigured;
 
     if (hydraautoconfigured)
 	return;
 
     hydraautoconfigured = 1;
+    hydra_number_of_boards = 0;
 
-    for (i = 0; i < HYDRA_MAXBOARDS; ++i)
+    /* Method 1: autocon() using bootinfo table */
+    n = 0;
+    for (i = 0; i < HYDRA_MAXBOARDS; i++)
     {
-	if (autocon(NE8390_BOARD_ID, i, &hydra_autoconfig[i].address, &dummy))
-	    hydra_autoconfig[i].type = 1;
+	if (autocon(NE8390_BOARD_ID, i, &addr, &size))
+	{
+	    hydra_autoconfig[hydra_number_of_boards].address = addr;
+	    hydra_autoconfig[hydra_number_of_boards].type = 1;
+	    hydra_number_of_boards++;
+	    n++;
+	}
 	else
 	    break;
     }
-
-    hydra_number_of_boards = i;
-
-    for (z = 0; z < i - 1; ++z)
+    if (n > 0)
     {
-	hit = 0;
-	for (x = 0; x < i - 1; ++x)
-	{
-	    if (hydra_autoconfig[x].address > hydra_autoconfig[x + 1].address)
-	    {
-		hit = 1;
-		y = hydra_autoconfig[x].address;
-		hydra_autoconfig[x].address = hydra_autoconfig[x + 1].address;
-		hydra_autoconfig[x + 1].address = y;
-		w = hydra_autoconfig[x].type;
-		hydra_autoconfig[x].type = hydra_autoconfig[x + 1].type;
-		hydra_autoconfig[x + 1].type = w;
-	    }
-	}
-    if (!hit)
-	    break;
+	cmn_err(CE_NOTE, "hydra: found %d board(s) via autocon", n);
+	return;
     }
 
-    if (i > 0)
-	cmn_err(CE_NOTE, "hydra: %d board(s) found", i);
-    else
-	cmn_err(CE_NOTE, "hydra: no board found");
+    /* Method 2: Direct Zorro II slot probe (MAC at +0xffc0) */
+    n = 0;
+    for (slot = 0; slot < 8; slot++)
+    {
+	unsigned long base = 0x00E80000UL + slot * 0x10000UL;
+	unsigned char mac[6];
+	int valid;
+
+	for (i = 0; i < 6; i++)
+	    mac[i] = *(volatile unsigned char *)(base + 0xffc0 + i * 2);
+
+	valid = 1;
+	for (i = 0; i < 6; i++)
+	    if (mac[i] == 0 || mac[i] == 0xFF)
+		valid = 0;
+
+	if (!valid)
+	    continue;
+
+	cmn_err(CE_NOTE, "hydra: slot %d MAC %02x:%02x:%02x:%02x:%02x:%02x",
+		slot, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+
+	if (hydra_number_of_boards < HYDRA_MAXBOARDS)
+	{
+	    hydra_autoconfig[hydra_number_of_boards].address = base;
+	    hydra_autoconfig[hydra_number_of_boards].type = 1;
+	    hydra_number_of_boards++;
+	    n++;
+	}
+    }
+    if (n > 0)
+    {
+	cmn_err(CE_NOTE, "hydra: found %d board(s) via Zorro II probe", n);
+	return;
+    }
+
+    /* Method 3: A2065 fallback for FS-UAE testing */
+    n = 0;
+    for (i = 0; i < HYDRA_MAXBOARDS; i++)
+    {
+	if (autocon(0x02020070, i, &addr, &size))
+	{
+	    cmn_err(CE_NOTE, "hydra: found A2065 at 0x%08lx (testing mode)", addr);
+	    hydra_autoconfig[hydra_number_of_boards].address = addr;
+	    hydra_autoconfig[hydra_number_of_boards].type = 0x02020070;
+	    hydra_number_of_boards++;
+	    n++;
+	}
+	else
+	    break;
+    }
+    if (n > 0)
+	return;
+
+    cmn_err(CE_NOTE, "hydra: no board found");
 }
 
 int
 hydra_initialize(board_index)
 int board_index;
 {
-    int n;
+    int n, type;
     hydra_t *hp;
     unsigned char paddress[6];
     hydra_board_t *board = &hydra_board[board_index];
 
-    if ((board->hydra_info.board_base =
-	 (unsigned char *)hydra_autoconfig[board_index].address) != 0)
+    board->hydra_info.board_base =
+	(unsigned char *)hydra_autoconfig[board_index].address;
+    if (board->hydra_info.board_base == 0)
+	return 0;
+
+    type = hydra_autoconfig[board_index].type;
+
+    if (type == 1)
     {
+	/* Real Hydra / NE8390 board */
 	board->hydra_info.nic_base =
 	    board->hydra_info.board_base + NE8390_NIC_OFFSET;
 	get_ethernet_address((long)board->hydra_info.board_base, paddress);
     }
     else
-	return 0;
+    {
+	/* Non-Hydra board (e.g. A2065 for FS-UAE testing).
+	 * Store a fake address so STREAMS/DLPI plumbing can be tested.
+	 */
+	board->hydra_info.nic_base = 0;
+	paddress[0] = 0x02;
+	paddress[1] = 0x00;
+	paddress[2] = 0x68;
+	paddress[3] = 0x79;
+	paddress[4] = 0x00;
+	paddress[5] = board_index;
+    }
 
     for (n = 0, hp = board->hydra; n < HYDRA_MAXDEV; ++n, ++hp)
     {
 	hp->q = (queue_t *)NULL;
 	hp->sap = 0;
 	hp->state = DL_UNBOUND;
+    }
+
+    if (type != 1)
+    {
+	/* Fake board for testing — mark as running without NE2000 init */
+	board->hydra_status.board_state = HYDRA_BOARD_RUNNING;
+	bcopy((caddr_t)paddress, (caddr_t)board->hydra_info.paddress,
+	      sizeof(board->hydra_info.paddress));
+	return 1;
     }
 
     return setup_ne2000(board_index, paddress);
