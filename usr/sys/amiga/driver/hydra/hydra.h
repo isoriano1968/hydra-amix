@@ -77,7 +77,6 @@ typedef struct
 typedef struct
 {
     long            address;
-    int             type;
 } hydra_autoconfig_t;
 
 static void hydra_outb(volatile unsigned char *base, int reg, unsigned char val);

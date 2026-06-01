@@ -1364,7 +1364,7 @@ hydraautoconfig()
 
     hydraautoconfigured = 1;
     hydra_number_of_boards = 0;
-    cmn_err(CE_NOTE, "hydra: probing for Hydra Systems AmigaNet (DP8390)");
+    cmn_err(CE_NOTE, "hydra: probing for Hydra Systems AmigaNet");
 
     /* Method 1: autocon() using bootinfo table */
     n = 0;
@@ -1372,9 +1372,8 @@ hydraautoconfig()
     {
 	if (autocon(NE8390_BOARD_ID, i, &addr, &size))
 	{
-	    hydra_autoconfig[hydra_number_of_boards].address = addr;
-	    hydra_autoconfig[hydra_number_of_boards].type = 1;
-	    hydra_number_of_boards++;
+		hydra_autoconfig[hydra_number_of_boards].address = addr;
+		hydra_number_of_boards++;
 	    n++;
 	}
 	else
@@ -1407,7 +1406,6 @@ hydraautoconfig()
 	    if (hydra_number_of_boards < HYDRA_MAXBOARDS)
 	    {
 		hydra_autoconfig[hydra_number_of_boards].address = base;
-		hydra_autoconfig[hydra_number_of_boards].type = 1;
 		hydra_number_of_boards++;
 		n++;
 	    }
@@ -1453,7 +1451,6 @@ hydraautoconfig()
 	if (hydra_number_of_boards < HYDRA_MAXBOARDS)
 	{
 	    hydra_autoconfig[hydra_number_of_boards].address = base;
-	    hydra_autoconfig[hydra_number_of_boards].type = 1;
 	    hydra_number_of_boards++;
 	    n++;
 	}
@@ -1467,27 +1464,6 @@ hydraautoconfig()
 	return;
     }
 
-    /* Method 3: A2065 fallback for FS-UAE testing */
-    n = 0;
-    for (i = 0; i < HYDRA_MAXBOARDS; i++)
-    {
-	if (autocon(0x02020070, i, &addr, &size))
-	{
-	    cmn_err(CE_NOTE, "hydra: found A2065 at 0x%08lx (testing mode)", addr);
-	    hydra_autoconfig[hydra_number_of_boards].address = addr;
-	    hydra_autoconfig[hydra_number_of_boards].type = 0x02020070;
-	    hydra_number_of_boards++;
-	    n++;
-	}
-	else
-	    break;
-    }
-    if (n > 0)
-    {
-	cmn_err(CE_NOTE, "hydra: found %d board(s) via A2065 fallback", n);
-	return;
-    }
-
     cmn_err(CE_NOTE, "hydra: no board found");
 }
 
@@ -1495,7 +1471,7 @@ int
 hydra_initialize(board_index)
 int board_index;
 {
-    int n, type;
+    int n;
     hydra_t *hp;
     unsigned char paddress[6];
     hydra_board_t *board = &hydra_board[board_index];
@@ -1505,28 +1481,10 @@ int board_index;
     if (board->hydra_info.board_base == 0)
 	return 0;
 
-    type = hydra_autoconfig[board_index].type;
-
-    if (type == 1)
-    {
-	/* Real Hydra / NE8390 board */
-	board->hydra_info.nic_base =
-	    board->hydra_info.board_base + NE8390_NIC_OFFSET;
-	get_ethernet_address((long)board->hydra_info.board_base, paddress);
-    }
-    else
-    {
-	/* Non-Hydra board (e.g. A2065 for FS-UAE testing).
-	 * Store a fake address so STREAMS/DLPI plumbing can be tested.
-	 */
-	board->hydra_info.nic_base = 0;
-	paddress[0] = 0x02;
-	paddress[1] = 0x00;
-	paddress[2] = 0x68;
-	paddress[3] = 0x79;
-	paddress[4] = 0x00;
-	paddress[5] = board_index;
-    }
+    /* Real Hydra / NE8390 board */
+    board->hydra_info.nic_base =
+	board->hydra_info.board_base + NE8390_NIC_OFFSET;
+    get_ethernet_address((long)board->hydra_info.board_base, paddress);
 
     for (n = 0, hp = board->hydra; n < HYDRA_MAXDEV; ++n, ++hp)
     {
@@ -1535,14 +1493,8 @@ int board_index;
 	hp->state = DL_UNBOUND;
     }
 
-    if (type != 1)
-    {
-	/* Fake board for testing — mark as running without NE2000 init */
-	board->hydra_status.board_state = HYDRA_BOARD_RUNNING;
-	bcopy((caddr_t)paddress, (caddr_t)board->hydra_info.paddress,
-	      sizeof(board->hydra_info.paddress));
-	return 1;
-    }
+    bcopy((caddr_t)paddress, (caddr_t)board->hydra_info.paddress,
+	  sizeof(board->hydra_info.paddress));
 
     return setup_ne2000(board_index, paddress);
 }
@@ -1651,35 +1603,7 @@ int board_index;
 void
 hydrainit()
 {
-    volatile unsigned short *cfg;
-    unsigned short id;
-
-    /* Existing autoconfig probe — prints Hydra / A2065 results */
+    /* Probe for Hydra Systems AmigaNet boards */
     hydraautoconfig();
-
-    /*
-     * ZZ9000 probe via known Z2 base address (0xE80000).
-     * The ZZ9000 uses a non-standard autoconfig layout, so autocon()
-     * cannot find it.  We check the first autoconfig word directly.
-     */
-    cfg = (volatile unsigned short *)0x00E80000;
-    id = *cfg;
-    if (id != 0xFFFF && id != 0x0000)
-	cmn_err(CE_NOTE, "hydra: ZZ9000 (MNT Research) net/rtg at 0xE80000 (id=0x%04x)", id);
-
-    /*
-     * Also scan Z2 I/O slots for a ZZ9000 in a non-default slot.
-     */
-    {
-	int slot;
-	for (slot = 0; slot < 8; slot++)
-	{
-	    cfg = (volatile unsigned short *)(0x00E90000UL + slot * 0x10000UL);
-	    id = *cfg;
-	    if (id != 0xFFFF && id != 0x0000)
-		cmn_err(CE_NOTE, "hydra: unknown Z2 board at 0x%08lx (id=0x%04x)",
-			(unsigned long)cfg, id);
-	}
-    }
 }
 
