@@ -39,6 +39,24 @@ extern struct ifstats *ifstats;
 extern char *panicstr;
 void hydraautoconfig();
 
+/* AutoConfig ROM nibble decoding constants */
+#define AC_TYPE    0
+#define AC_PRODUCT 1
+#define AC_FLAGS   2
+#define AC_RESV    3
+#define AC_MANUF   4
+#define AC_SERIAL  6
+#define AC_DIAGVEC 10
+
+#define ERT_TYPEMASK  0xC0
+#define ERT_ZORROII   0xC0
+
+/* Known Zorro manufacturer:product IDs */
+#define HYDRA_AC_MANUF 0x0849
+#define HYDRA_AC_PROD  0x01
+#define AMERISTAR_AC_MANUF 0x041D
+#define AMERISTAR_AC_PROD  0x01
+
 int hydra_initialize();
 static int hydraopen(), hydraclose(), hydrawput(), hydrawsrv();
 static void hydraioctl();
@@ -1205,6 +1223,54 @@ unsigned char physical_ethernet_address[6];
 	physical_ethernet_address[j] = *(ptr + j * 2);
 }
 
+/* AutoConfig nibble decode helpers */
+static unsigned char
+ac_byte(volatile unsigned char *mem, int n)
+{
+    unsigned char hi = (mem[n * 4    ] >> 4) & 0x0F;
+    unsigned char lo = (mem[n * 4 + 2] >> 4) & 0x0F;
+    unsigned char raw = (hi << 4) | lo;
+    return (n == AC_TYPE) ? raw : (unsigned char)(~raw & 0xFF);
+}
+
+static unsigned short
+ac_word(volatile unsigned char *mem, int n)
+{
+    return (unsigned short)((unsigned short)ac_byte(mem, n) << 8 | ac_byte(mem, n + 1));
+}
+
+static int
+ac_match_board(volatile unsigned char *mem)
+{
+    unsigned char er_type;
+    int i;
+
+    /* Reject bus float */
+    for (i = 0; i < 16; i++)
+	if (mem[i] != 0xFF) break;
+    if (i == 16) return 0;
+    for (i = 0; i < 16; i++)
+	if (mem[i] != 0x00) break;
+    if (i == 16) return 0;
+
+    /* Must be Zorro II type */
+    er_type = ac_byte(mem, AC_TYPE);
+    if ((er_type & ERT_TYPEMASK) != ERT_ZORROII)
+	return 0;
+
+    /* Reserved byte must decode to 0x00 */
+    if (ac_byte(mem, AC_RESV) != 0x00)
+	return 0;
+
+    /* Check manufacturer and product */
+    {
+	unsigned short manuf = ac_word(mem, AC_MANUF);
+	unsigned char prod   = ac_byte(mem, AC_PRODUCT);
+	return (manuf == HYDRA_AC_MANUF && prod == HYDRA_AC_PROD) ||
+	       (manuf == AMERISTAR_AC_MANUF && prod == AMERISTAR_AC_PROD);
+    }
+}
+
 void
 hydraautoconfig()
 {
@@ -1235,6 +1301,36 @@ hydraautoconfig()
     if (n > 0)
     {
 	cmn_err(CE_NOTE, "hydra: found %d board(s) via autocon", n);
+	return;
+    }
+
+    /* Method 1a: Direct AutoConfig ROM decode at Zorro II I/O slots */
+    n = 0;
+    for (slot = 0; slot < 8; slot++)
+    {
+	unsigned long base = 0x00E90000UL + slot * 0x10000UL;
+	volatile unsigned char *mem = (volatile unsigned char *)base;
+
+	if (ac_match_board(mem))
+	{
+	    unsigned short manuf = ac_word(mem, AC_MANUF);
+	    unsigned char prod   = ac_byte(mem, AC_PRODUCT);
+
+	    cmn_err(CE_NOTE, "hydra: slot %d AutoConfig %04X:%02X at 0x%08lx",
+		    slot, manuf, prod, base);
+
+	    if (hydra_number_of_boards < HYDRA_MAXBOARDS)
+	    {
+		hydra_autoconfig[hydra_number_of_boards].address = base;
+		hydra_autoconfig[hydra_number_of_boards].type = 1;
+		hydra_number_of_boards++;
+		n++;
+	    }
+	}
+    }
+    if (n > 0)
+    {
+	cmn_err(CE_NOTE, "hydra: found %d board(s) via AutoConfig decode", n);
 	return;
     }
 
