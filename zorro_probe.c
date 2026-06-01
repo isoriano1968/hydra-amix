@@ -54,8 +54,7 @@
 
 /* Known board IDs */
 #define ID_A2065      0x02020070UL  /* Commodore A2065, mfgr 0x0202 prod 112 */
-#define ID_HYDRA_0849 0x08490001UL  /* Hydra Systems AmigaNet */
-#define ID_HYDRA_041D 0x041D0001UL  /* Ameristar (possible rebadge) */
+#define ID_HYDRA      0x08490001UL  /* Hydra Systems AmigaNet (2121 / 1) */
 
 #define MAX_BOARDS 32
 
@@ -153,8 +152,7 @@ identify_board(unsigned short manuf, unsigned char prod)
     unsigned long id = ((unsigned long)manuf << 16) | prod;
     switch (id) {
     case ID_A2065:      return "Commodore A2065 Ethernet";
-    case ID_HYDRA_0849: return "Hydra Systems AmigaNet";
-    case ID_HYDRA_041D: return "Ameristar A2065 (rebadge?)";
+    case ID_HYDRA:      return "Hydra Systems AmigaNet";
     default:            return NULL;
     }
 }
@@ -265,14 +263,20 @@ static void scan_slots(int fd, const char *label, unsigned long base, unsigned l
             {
                 int valid = 1;
                 for (i = 0; i < 6; i++)
-                    if (mac[i*2] == 0 || mac[i*2] == 0xFF)
-                        valid = 0;
+                    if (mac[i*2] != 0xFF) break;
+                if (i == 6) valid = 0;
+                for (i = 0; i < 6; i++)
+                    if (mac[i*2] != 0x00) break;
+                if (i == 6) valid = 0;
+                for (i = 1; i < 6; i++)
+                    if (mac[i*2] != mac[0]) break;
+                if (i == 6) valid = 0;
                 for (i = 0; i < 6; i++)
                     printf("%02x%c", mac[i*2], i<5?':':'\n');
                 if (valid)
-                    printf("    => valid NE2000 MAC\n");
+                    printf("    => NE2000 MAC\n");
                 else
-                    printf("    (no valid MAC)\n");
+                    printf("    (no MAC data)\n");
             }
 
             printf("    +0xffe1 (NE2000 NIC): ");
@@ -296,7 +300,7 @@ static void scan_slots(int fd, const char *label, unsigned long base, unsigned l
 
 static void probe_hardware(void)
 {
-    int fd, found = 0;
+    int fd;
     const char *devpath = NULL;
 
     fd = open("/dev/mem", O_RDONLY);

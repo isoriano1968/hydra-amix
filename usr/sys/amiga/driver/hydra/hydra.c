@@ -38,6 +38,7 @@ extern struct ifstats *ifstats;
 
 extern char *panicstr;
 void hydraautoconfig();
+void hydrainit();
 
 /* AutoConfig ROM nibble decoding constants */
 #define AC_TYPE    0
@@ -54,8 +55,6 @@ void hydraautoconfig();
 /* Known Zorro manufacturer:product IDs */
 #define HYDRA_AC_MANUF 0x0849
 #define HYDRA_AC_PROD  0x01
-#define AMERISTAR_AC_MANUF 0x041D
-#define AMERISTAR_AC_PROD  0x01
 
 int hydra_initialize();
 static int hydraopen(), hydraclose(), hydrawput(), hydrawsrv();
@@ -191,8 +190,11 @@ cred_t *credp;
     q->q_ptr = (char *)hp;
     WR(q)->q_ptr = (char *)hp;
     hp->q = q;
+    WR(q)->q_ptr = (char *)hp;
     hp->board_index = board_index;
     hp->flags = 0;
+    hp->state = DL_UNATTACHED;
+    hp->sap = 0;
 
     if (!board->ifstats.ifs_name)
     {
@@ -203,6 +205,7 @@ cred_t *credp;
 	ifstats = &board->ifstats;
     }
     board->ifstats.ifs_active = 1;
+    board->if_flags = IFF_BROADCAST | IFF_NOTRAILERS | IFF_RUNNING;
 
     return 0;
 }
@@ -686,8 +689,21 @@ mblk_t *mp;
     }
 
     case SIOCSIFFLAGS:
+	board->if_flags = ((struct ifreq *)mp->b_cont->b_rptr)->ifr_flags;
+	mp->b_datap->db_type = M_IOCACK;
+	freemsg(unlinkb(mp));
+	iocbp->ioc_count = 0;
+	iocbp->ioc_rval = 0;
+	iocbp->ioc_error = 0;
+	putnext(RD(q), mp);
+	return;
+
     case SIOCGIFFLAGS:
 	mp->b_datap->db_type = M_IOCACK;
+	freemsg(unlinkb(mp));
+	iocbp->ioc_count = 0;
+	iocbp->ioc_rval = 0;
+	iocbp->ioc_error = 0;
 	putnext(RD(q), mp);
 	return;
 
@@ -729,6 +745,30 @@ mblk_t *mp;
 	if (q->q_first || !hydraxmit(q, mp))
 	    putq(q, mp);
 	break;
+
+    case DL_ATTACH_REQ:
+	{
+	    dl_ok_ack_t *okp;
+
+	    STRLOG(0x6879, 0, 8, SL_TRACE, "hya[%d] Attach Request\n",
+		   hp->board_index);
+
+	    freemsg(mp);
+
+	    if (!(mp = allocb(sizeof(dl_ok_ack_t), BPRI_MED)))
+		return 1;
+
+	    okp = (dl_ok_ack_t *)mp->b_wptr;
+	    mp->b_datap->db_type = M_PCPROTO;
+	    okp->dl_primitive = DL_OK_ACK;
+	    okp->dl_correct_primitive = DL_ATTACH_REQ;
+	    mp->b_wptr += sizeof(dl_ok_ack_t);
+
+	    hp->state = DL_UNBOUND;
+
+	    qreply(q, mp);
+	    return 1;
+	}
 
     case DL_BIND_REQ:
 	{
@@ -796,7 +836,7 @@ mblk_t *mp;
 	    ackp->dl_qos_range_offset = 0;
 	    ackp->dl_provider_style = DL_STYLE1;
 	    ackp->dl_growth = 0;
-	    if (hp->state == DL_IDLE)
+	    if (hp->state != DL_UNATTACHED)
 	    {
 		ackp->dl_addr_offset = sizeof(dl_info_ack_t);
 		mp->b_wptr += sizeof(dl_info_ack_t);
@@ -835,6 +875,30 @@ mblk_t *mp;
 
 	    hp->state = DL_UNBOUND;
 	    hp->sap = 0;
+
+	    qreply(q, mp);
+	    return 1;
+	}
+
+    case DL_DETACH_REQ:
+	{
+	    dl_ok_ack_t *okp;
+
+	    STRLOG(0x6879, 0, 8, SL_TRACE, "hya[%d] Detach Request\n",
+		   hp->board_index);
+
+	    freemsg(mp);
+
+	    if (!(mp = allocb(sizeof(dl_ok_ack_t), BPRI_MED)))
+		return 1;
+
+	    okp = (dl_ok_ack_t *)mp->b_wptr;
+	    mp->b_datap->db_type = M_PCPROTO;
+	    okp->dl_primitive = DL_OK_ACK;
+	    okp->dl_correct_primitive = DL_DETACH_REQ;
+	    mp->b_wptr += sizeof(dl_ok_ack_t);
+
+	    hp->state = DL_UNATTACHED;
 
 	    qreply(q, mp);
 	    return 1;
@@ -1266,8 +1330,7 @@ ac_match_board(volatile unsigned char *mem)
     {
 	unsigned short manuf = ac_word(mem, AC_MANUF);
 	unsigned char prod   = ac_byte(mem, AC_PRODUCT);
-	return (manuf == HYDRA_AC_MANUF && prod == HYDRA_AC_PROD) ||
-	       (manuf == AMERISTAR_AC_MANUF && prod == AMERISTAR_AC_PROD);
+	return (manuf == HYDRA_AC_MANUF && prod == HYDRA_AC_PROD);
     }
 }
 
@@ -1283,6 +1346,7 @@ hydraautoconfig()
 
     hydraautoconfigured = 1;
     hydra_number_of_boards = 0;
+    cmn_err(CE_NOTE, "hydra: probing for Hydra Systems AmigaNet (DP8390)");
 
     /* Method 1: autocon() using bootinfo table */
     n = 0;
@@ -1347,8 +1411,14 @@ hydraautoconfig()
 
 	valid = 1;
 	for (i = 0; i < 6; i++)
-	    if (mac[i] == 0 || mac[i] == 0xFF)
-		valid = 0;
+	    if (mac[i] != 0xFF) break;
+	if (i == 6) valid = 0;            /* all 0xFF = bus float */
+	for (i = 0; i < 6; i++)
+	    if (mac[i] != 0x00) break;
+	if (i == 6) valid = 0;            /* all 0x00 = no PROM */
+	for (i = 1; i < 6; i++)
+	    if (mac[i] != mac[0]) break;
+	if (i == 6) valid = 0;            /* all same = invalid */
 
 	if (!valid)
 	    continue;
@@ -1546,3 +1616,39 @@ int board_index;
 
     DELAY(100);
 }
+
+void
+hydrainit()
+{
+    volatile unsigned short *cfg;
+    unsigned short id;
+
+    /* Existing autoconfig probe — prints Hydra / A2065 results */
+    hydraautoconfig();
+
+    /*
+     * ZZ9000 probe via known Z2 base address (0xE80000).
+     * The ZZ9000 uses a non-standard autoconfig layout, so autocon()
+     * cannot find it.  We check the first autoconfig word directly.
+     */
+    cfg = (volatile unsigned short *)0x00E80000;
+    id = *cfg;
+    if (id != 0xFFFF && id != 0x0000)
+	cmn_err(CE_NOTE, "hydra: ZZ9000 (MNT Research) net/rtg at 0xE80000 (id=0x%04x)", id);
+
+    /*
+     * Also scan Z2 I/O slots for a ZZ9000 in a non-default slot.
+     */
+    {
+	int slot;
+	for (slot = 0; slot < 8; slot++)
+	{
+	    cfg = (volatile unsigned short *)(0x00E90000UL + slot * 0x10000UL);
+	    id = *cfg;
+	    if (id != 0xFFFF && id != 0x0000)
+		cmn_err(CE_NOTE, "hydra: unknown Z2 board at 0x%08lx (id=0x%04x)",
+			(unsigned long)cfg, id);
+	}
+    }
+}
+

@@ -35,7 +35,7 @@
 #include "kernel.h"
 
 extern void fpuinit(),cinit(),binit(),inoinit(),vfsinit(),finit();
-extern void strinit(),msginit(),seminit(),sadinit();
+extern void strinit(),msginit(),seminit(),sadinit(),hydrainit();
 extern void tclinit(),tcoinit(),tcooinit();
 #ifdef KERNEL_DEBUGGER
 extern void kdb_init_hooks();
@@ -58,6 +58,7 @@ void	(*init_tbl[])() = {
 #ifdef KERNEL_DEBUGGER
 	kdb_init_hooks,
 #endif /* KERNEL_DEBUGGER */
+	hydrainit,
 	0};
 
 struct buf pbuf[NPBUF];

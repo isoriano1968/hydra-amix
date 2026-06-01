@@ -71,6 +71,7 @@ typedef struct
     hydra_status_t  hydra_status;
     hydra_info_t    hydra_info;
     struct ifstats  ifstats;
+    int             if_flags;
 } hydra_board_t;
 
 typedef struct

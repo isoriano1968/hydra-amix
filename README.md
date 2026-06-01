@@ -16,7 +16,7 @@ The driver follows the same DLPI/STREAMS architecture as the A2065 driver, makin
 |---------|--------|
 | Card | Hydra Systems AmigaNet rev 1.2a |
 | Chipset | National Semiconductor DP8390 (NE2000-compatible) |
-| Bus | Zorro II (autoconfig ID: 1053/1 = 0x041D0001) |
+| Bus | Zorro II (autoconfig ID: 2121/1 = 0x08490001) |
 | NIC offset | board + 0xffe1 (odd byte lane, D0–D7) |
 | MAC PROM | board + 0xffc0 (16-bit bus, every other byte) |
 | SRAM | 16 KB on-card packet buffer |

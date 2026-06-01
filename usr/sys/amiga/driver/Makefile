@@ -16,7 +16,6 @@ OBJ	= \
 	  sl.o\
 	  slip.o\
 	  tiga.o \
-	  zz9000.o \
 	  audio.o \
 	  aen/exp \
 	  hydra/exp # kdb/exp

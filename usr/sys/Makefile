@@ -33,7 +33,7 @@ bootfloppy : force
 	(KERNEL=`pwd`/$(MACHINE)$(KERNEL); cd $(BOOTDIR); $(MAKE) floppy KERNEL=$${KERNEL})
 
 $(MACHINE)$(KERNEL) : $(KERNEL)
-	@if nm -h -u $(KERNEL) | egrep -v '(etext|edata|end)' ; then \
+	@if nm -u $(KERNEL) | egrep -v '^$|Symbols from|etext|edata|end' ; then \
 		echo "unresolved symbols" ; \
 		exit 1; \
 	else \
@@ -63,7 +63,7 @@ $(KERNEL) : $(PLATFORM)/config/$(KERNEL).o
 	ld -o $@ $(LINKARGS) $(OBJS) $(PLATFORM)/config/$(KERNEL).o
 	chmod +r $@
 	@echo ""
-	@if nm -hu $@ | egrep -v '^    (etext|end|edata)$$' ; then \
+	@if nm -u $@ | egrep -v '^$|Symbols from|etext|end|edata' ; then \
 		echo "Unresolved Symbol(s)!"; \
 		exit 1; \
 	else \
