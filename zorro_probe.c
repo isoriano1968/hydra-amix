@@ -163,24 +163,25 @@ identify_board(unsigned short manuf, unsigned char prod)
 /* mmap-safe region tester                                              */
 /* ------------------------------------------------------------------ */
 
-static int
-try_map(int fd, unsigned long offset, unsigned char *buf, int len)
+static int try_map(int fd, unsigned long offset, unsigned char *buf, int len)
 {
     volatile unsigned char *mem;
     int i;
 
     if (setjmp(env) != 0)
     {
-        fprintf(stderr, "    BUS ERROR at 0x%08lX\n", offset);
+        fprintf(stderr, "      BUS ERROR at 0x%08lX\n", offset);
         return -1;
     }
 
     mem = (unsigned char *)mmap((caddr_t)0, len, PROT_READ, MAP_SHARED,
                                 fd, (off_t)offset);
     if (mem == (unsigned char *)-1)
+    {
+        fprintf(stderr, "      mmap(0x%08lX) failed\n", offset);
         return -1;
+    }
 
-    /* Read bytes into buffer (may trigger SIGBUS) */
     for (i = 0; i < len; i++)
         buf[i] = mem[i];
 
@@ -192,154 +193,165 @@ try_map(int fd, unsigned long offset, unsigned char *buf, int len)
 /* Hardware probe                                                      */
 /* ------------------------------------------------------------------ */
 
-static void
-probe_hardware(void)
+static void scan_slots(int fd, const char *label, unsigned long base, unsigned long end, unsigned long step, int check_mac)
 {
-    int fd, found;
-
-    fd = open("/dev/mem", O_RDONLY);
-    if (fd < 0)
+    unsigned long addr;
+    for (addr = base; addr <= end; addr += step)
     {
-        fd = open("/dev/pmem", O_RDONLY);
-        if (fd < 0)
+        unsigned char ac_raw[AC_MAP_SIZE];
+        int i, all_zero, all_ff;
+        int slot = (int)((addr - base) / step);
+
+        printf("  Slot %d at 0x%08lX: ", slot, addr);
+
+        if (try_map(fd, addr, ac_raw, AC_MAP_SIZE) != 0)
         {
-            printf("  (no /dev/mem access)\n");
-            return;
+            printf("mmap failed\n");
+            continue;
         }
-    }
 
-    found = 0;
-
-    /* Scan Zorro II I/O slots */
-    printf("\n  --- Zorro II I/O slots (0xE90000-0xEFFFFF) ---\n");
-    {
-        unsigned long addr;
-        for (addr = ZII_IO_BASE; addr <= ZII_IO_END; addr += ZII_IO_STEP)
+        all_zero = all_ff = 1;
+        for (i = 0; i < AC_MAP_SIZE; i++)
         {
-            unsigned char ac_raw[AC_MAP_SIZE];
-            int i, all_zero, all_ff;
-            int slot = (int)((addr - ZII_IO_BASE) / ZII_IO_STEP);
+            if (ac_raw[i] != 0) all_zero = 0;
+            if (ac_raw[i] != 0xFF) all_ff = 0;
+        }
+        if (all_zero)
+        {
+            printf("all zeros\n");
+            continue;
+        }
+        if (all_ff)
+        {
+            printf("all 0xFF\n");
+            continue;
+        }
 
-            if (try_map(fd, addr, ac_raw, AC_MAP_SIZE) != 0)
-                continue;
+        printf("present\n");
 
-            all_zero = all_ff = 1;
-            for (i = 0; i < AC_MAP_SIZE; i++)
-            {
-                if (ac_raw[i] != 0) all_zero = 0;
-                if (ac_raw[i] != 0xFF) all_ff = 0;
-            }
-            if (all_zero || all_ff)
-                continue;
+        /* Try AutoConfig decode */
+        if (is_autoconfig(ac_raw))
+        {
+            unsigned char er_type = ac_byte(ac_raw, AC_TYPE);
+            unsigned char prod    = ac_byte(ac_raw, AC_PRODUCT);
+            unsigned short manuf  = ac_word(ac_raw, AC_MANUF);
+            unsigned long serial  = ac_long(ac_raw, AC_SERIAL);
+            unsigned short diag   = ac_word(ac_raw, AC_DIAGVEC);
+            unsigned long size    = size_table[er_type & ERT_SIZEMASK];
+            const char *name      = identify_board(manuf, prod);
 
-            found = 1;
-            printf("  Slot %d (0x%08lX):\n", slot, addr);
-
-            /* Try AutoConfig decode */
-            if (is_autoconfig(ac_raw))
-            {
-                unsigned char er_type = ac_byte(ac_raw, AC_TYPE);
-                unsigned char prod    = ac_byte(ac_raw, AC_PRODUCT);
-                unsigned short manuf  = ac_word(ac_raw, AC_MANUF);
-                unsigned long serial  = ac_long(ac_raw, AC_SERIAL);
-                unsigned short diag   = ac_word(ac_raw, AC_DIAGVEC);
-                unsigned long size    = size_table[er_type & ERT_SIZEMASK];
-                const char *name      = identify_board(manuf, prod);
-
-                printf("    AutoConfig: manuf=%04X prod=%02X serial=%08lX\n",
-                       (unsigned)manuf, (unsigned)prod, serial);
-                printf("    Size: %s  DiagVec: %04X\n", size_str(size),
-                       (unsigned)diag);
-                if (name)
-                    printf("    => %s\n", name);
-                else
-                    printf("    => Unknown board\n");
-            }
+            printf("    AutoConfig: manuf=%04X prod=%02X serial=%08lX\n",
+                   (unsigned)manuf, (unsigned)prod, serial);
+            printf("    Size: %s  DiagVec: %04X\n", size_str(size),
+                   (unsigned)diag);
+            if (name)
+                printf("    => %s\n", name);
             else
+                printf("    => Unknown board\n");
+        }
+        else
+        {
+            printf("    Raw bytes at +0x00:");
+            for (i = 0; i < 16; i++)
+                printf(" %02x", ac_raw[i]);
+            printf("\n");
+        }
+
+        if (check_mac)
+        {
+            unsigned char mac[12];
+            printf("    +0xffc0 (MAC PROM): ");
+            if (try_map(fd, addr + NE8390_ADDRPROM_OFFSET, mac, 12) == 0)
             {
-                printf("    Raw bytes at +0x00:");
-                for (i = 0; i < 16; i++)
-                    printf(" %02x", ac_raw[i]);
-                printf("\n");
+                int valid = 1;
+                for (i = 0; i < 6; i++)
+                    if (mac[i*2] == 0 || mac[i*2] == 0xFF)
+                        valid = 0;
+                for (i = 0; i < 6; i++)
+                    printf("%02x%c", mac[i*2], i<5?':':'\n');
+                if (valid)
+                    printf("    => valid NE2000 MAC\n");
+                else
+                    printf("    (no valid MAC)\n");
             }
 
-            /* Try NE2000 MAC PROM at +0xffc0 */
+            printf("    +0xffe1 (NE2000 NIC): ");
             {
-                unsigned char mac[12];
-                if (try_map(fd, addr + NE8390_ADDRPROM_OFFSET, mac, 12) == 0)
+                unsigned char nic[4];
+                if (try_map(fd, addr + 0xffe1, nic, 2) == 0)
                 {
-                    int valid = 1;
-                    for (i = 0; i < 6; i++)
-                        if (mac[i*2] == 0 || mac[i*2] == 0xFF)
-                            valid = 0;
-                    if (valid)
-                    {
-                        printf("    MAC PROM: %02x:%02x:%02x:%02x:%02x:%02x\n",
-                               mac[0], mac[2], mac[4], mac[6], mac[8], mac[10]);
-                        printf("    => NE2000 card detected\n");
-                    }
+                    printf("regs=%02x %02x",
+                           (unsigned)nic[0], (unsigned)nic[1]);
+                    if (nic[0] == 0x21 || nic[1] == 0x21)
+                        printf(" DP8390 signature?\n");
                     else
-                    {
-                        printf("    +0xffc0:");
-                        for (i = 0; i < 6; i++)
-                            printf(" %02x", mac[i*2]);
-                        printf(" (no valid MAC)\n");
-                    }
+                        printf("\n");
                 }
             }
-
-            printf("\n");
         }
+
+        printf("\n");
+    }
+}
+
+static void probe_hardware(void)
+{
+    int fd, found = 0;
+    const char *devpath = NULL;
+
+    fd = open("/dev/mem", O_RDONLY);
+    if (fd >= 0) {
+        devpath = "/dev/mem";
+    } else {
+        fd = open("/dev/pmem", O_RDONLY);
+        if (fd >= 0) devpath = "/dev/pmem";
     }
 
-    /* Scan Zorro II memory slots */
-    printf("  --- Zorro II memory slots (0x200000-0x9FFFFF) ---\n");
+    if (!devpath)
     {
-        unsigned long addr;
-        for (addr = ZII_MEM_BASE; addr <= ZII_MEM_END; addr += ZII_MEM_STEP)
+        printf("  (neither /dev/mem nor /dev/pmem accessible)\n");
+        return;
+    }
+    printf("  Using %s\n\n", devpath);
+
+    /* Zorro II I/O: scan both 0xE80000 (kernel method 2) and 0xE90000 (lszorro) */
+    printf("  --- Zorro II I/O: 0xE80000 range (kernel method 2) ---\n");
+    scan_slots(fd, "0xE80000", 0x00E80000UL, 0x00E8FFFFUL, 0x00010000UL, 1);
+
+    printf("  --- Zorro II I/O: 0xE90000 range (lszorro) ---\n");
+    scan_slots(fd, "0xE90000", 0x00E90000UL, 0x00EFFFFFUL, 0x00010000UL, 1);
+
+    /* Zorro II memory: look for AutoConfig-enabled boards */
+    printf("  --- Zorro II memory: 0x200000-0x9FFFFF ---\n");
+    scan_slots(fd, "0x200000", 0x00200000UL, 0x009FFFFFUL, 0x00010000UL, 0);
+
+    /* Also try probing /dev/bootinfo (if it exists) */
+    printf("  --- /dev/bootinfo (if available) ---\n");
+    {
+        int bfd = open("/dev/bootinfo", O_RDONLY);
+        if (bfd >= 0)
         {
-            unsigned char ac_raw[AC_MAP_SIZE];
-            int i, all_zero, all_ff;
-
-            if (try_map(fd, addr, ac_raw, AC_MAP_SIZE) != 0)
-                continue;
-
-            all_zero = all_ff = 1;
-            for (i = 0; i < AC_MAP_SIZE; i++)
-            {
-                if (ac_raw[i] != 0) all_zero = 0;
-                if (ac_raw[i] != 0xFF) all_ff = 0;
-            }
-            if (all_zero || all_ff)
-                continue;
-
-            if (!is_autoconfig(ac_raw))
-                continue;
-
-            found = 1;
-            printf("  0x%08lX:\n", addr);
-
-            {
-                unsigned char er_type = ac_byte(ac_raw, AC_TYPE);
-                unsigned char prod    = ac_byte(ac_raw, AC_PRODUCT);
-                unsigned short manuf  = ac_word(ac_raw, AC_MANUF);
-                unsigned long serial  = ac_long(ac_raw, AC_SERIAL);
-                unsigned long size    = size_table[er_type & ERT_SIZEMASK];
-                const char *name      = identify_board(manuf, prod);
-
-                printf("    AutoConfig: manuf=%04X prod=%02X serial=%08lX\n",
-                       (unsigned)manuf, (unsigned)prod, serial);
-                printf("    Size: %s\n", size_str(size));
-                if (name)
-                    printf("    => %s\n", name);
-            }
-            printf("\n");
+            printf("  /dev/bootinfo opened successfully\n");
+            close(bfd);
         }
+        else
+            printf("  /dev/bootinfo: %s\n", strerror(errno));
     }
 
-    if (!found)
-        printf("  (no devices detected via /dev/mem)\n");
+    /* /dev/bootinfo probe */
+    printf("  --- /dev/bootinfo (if available) ---\n");
+    {
+        int bfd = open("/dev/bootinfo", O_RDONLY);
+        if (bfd >= 0)
+        {
+            printf("  /dev/bootinfo opened successfully\n");
+            close(bfd);
+        }
+        else
+            printf("  /dev/bootinfo: %s\n", strerror(errno));
+    }
 
+    printf("\n  (end of hardware probe)\n");
     close(fd);
 }
 
