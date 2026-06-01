@@ -152,17 +152,29 @@ cred_t *credp;
     sap_index = (minor_device & 0xF0) >> 4;
     board = &hydra_board[board_index];
 
+    cmn_err(CE_NOTE, "hya%d: open (board_state=%d base=0x%08lx)",
+	    board_index, board->hydra_status.board_state,
+	    (unsigned long)board->hydra_info.board_base);
+
     if (board_index >= HYDRA_MAXBOARDS)
 	return ENODEV;
 
     if (board->hydra_status.board_state != HYDRA_BOARD_RUNNING)
     {
 	if (!hydra_initialize(board_index))
+	{
+	    cmn_err(CE_NOTE, "hya%d: init failed", board_index);
 	    return ENODEV;
+	}
+	cmn_err(CE_NOTE, "hya%d: init OK at 0x%08lx", board_index,
+		(unsigned long)board->hydra_info.board_base);
     }
 
     if (board->hydra_info.board_base == 0)
+    {
+	cmn_err(CE_NOTE, "hya%d: no board base", board_index);
 	return ENXIO;
+    }
 
     if (sap_index == 0)
     {
@@ -699,13 +711,18 @@ mblk_t *mp;
 	return;
 
     case SIOCGIFFLAGS:
+    {
+	struct ifreq *ifrp = (struct ifreq *)mp->b_cont->b_rptr;
+	cmn_err(CE_NOTE, "hya%d: SIOCGIFFLAGS (flags=0x%x state=%d)",
+		hp->board_index, board->if_flags, hp->state);
+	ifrp->ifr_flags = board->if_flags;
 	mp->b_datap->db_type = M_IOCACK;
-	freemsg(unlinkb(mp));
-	iocbp->ioc_count = 0;
+	iocbp->ioc_count = sizeof(struct ifreq);
 	iocbp->ioc_rval = 0;
 	iocbp->ioc_error = 0;
 	putnext(RD(q), mp);
 	return;
+    }
 
     case IF_UNITSEL:
     default:
@@ -750,6 +767,9 @@ mblk_t *mp;
 	{
 	    dl_ok_ack_t *okp;
 
+	    cmn_err(CE_NOTE, "hya%d: DL_ATTACH_REQ (state=%d)",
+		    hp->board_index, hp->state);
+
 	    STRLOG(0x6879, 0, 8, SL_TRACE, "hya[%d] Attach Request\n",
 		   hp->board_index);
 
@@ -774,6 +794,9 @@ mblk_t *mp;
 	{
 	    dl_bind_req_t *reqp = (dl_bind_req_t *)mp->b_rptr;
 	    dl_bind_ack_t *ackp;
+
+	    cmn_err(CE_NOTE, "hya%d: DL_BIND_REQ sap=0x%x (state=%d)",
+		    hp->board_index, reqp->dl_sap, hp->state);
 
 	    hp->sap = reqp->dl_sap;
 	    hp->state = DL_IDLE;
@@ -810,8 +833,8 @@ mblk_t *mp;
 	{
 	    dl_info_ack_t *ackp;
 
-	    STRLOG(0x6879, 0, 8, SL_TRACE, "hya[%d] Info Request, sap=0x%x\n",
-		   hp->board_index, hp->sap);
+	    cmn_err(CE_NOTE, "hya%d: DL_INFO_REQ (state=%d sap=0x%x style=%d)",
+		    hp->board_index, hp->state, hp->sap, DL_STYLE1);
 
 	    freemsg(mp);
 
@@ -1365,6 +1388,9 @@ hydraautoconfig()
     if (n > 0)
     {
 	cmn_err(CE_NOTE, "hydra: found %d board(s) via autocon", n);
+	for (i = 0; i < n; i++)
+	    cmn_err(CE_NOTE, "hydra:   board %d at 0x%08lx",
+		    i, hydra_autoconfig[i].address);
 	return;
     }
 
@@ -1395,6 +1421,9 @@ hydraautoconfig()
     if (n > 0)
     {
 	cmn_err(CE_NOTE, "hydra: found %d board(s) via AutoConfig decode", n);
+	for (i = 0; i < n; i++)
+	    cmn_err(CE_NOTE, "hydra:   board %d at 0x%08lx",
+		    i, hydra_autoconfig[i].address);
 	return;
     }
 
@@ -1423,8 +1452,8 @@ hydraautoconfig()
 	if (!valid)
 	    continue;
 
-	cmn_err(CE_NOTE, "hydra: slot %d MAC %02x:%02x:%02x:%02x:%02x:%02x",
-		slot, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+	cmn_err(CE_NOTE, "hydra: slot %d (base 0x%08lx) MAC %02x:%02x:%02x:%02x:%02x:%02x",
+		slot, base, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 
 	if (hydra_number_of_boards < HYDRA_MAXBOARDS)
 	{
@@ -1437,6 +1466,9 @@ hydraautoconfig()
     if (n > 0)
     {
 	cmn_err(CE_NOTE, "hydra: found %d board(s) via Zorro II probe", n);
+	for (i = 0; i < n; i++)
+	    cmn_err(CE_NOTE, "hydra:   board %d at 0x%08lx",
+		    i, hydra_autoconfig[i].address);
 	return;
     }
 
@@ -1456,7 +1488,10 @@ hydraautoconfig()
 	    break;
     }
     if (n > 0)
+    {
+	cmn_err(CE_NOTE, "hydra: found %d board(s) via A2065 fallback", n);
 	return;
+    }
 
     cmn_err(CE_NOTE, "hydra: no board found");
 }
