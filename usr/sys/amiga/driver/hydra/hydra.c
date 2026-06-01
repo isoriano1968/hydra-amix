@@ -202,7 +202,6 @@ cred_t *credp;
     q->q_ptr = (char *)hp;
     WR(q)->q_ptr = (char *)hp;
     hp->q = q;
-    WR(q)->q_ptr = (char *)hp;
     hp->board_index = board_index;
     hp->flags = 0;
     hp->state = DL_UNATTACHED;
@@ -227,9 +226,11 @@ hydraclose(q)
 register queue_t *q;
 {
     int dev;
+    int board_index;
     register hydra_t *hp = (hydra_t *)q->q_ptr;
     register hydra_board_t *board = &hydra_board[hp->board_index];
 
+    board_index = hp->board_index;
     hp->q = 0;
 
     OTHERQ(q)->q_ptr = NULL;
@@ -245,10 +246,10 @@ register queue_t *q;
     {
 	STRLOG(0x6879, 0, 1, SL_TRACE,
 	       "hya[%d] Close called - halting NE2000\n",
-	       hp->board_index);
+	       board_index);
 
 	hydra_outb(board->hydra_info.nic_base, NE_CR,
-		   NE_CR_P0 | NE_CR_STP | NE_CR_RDMA_ABORT);
+		   NE_CR_P0 | NE_CR_STP  );
 
 	board->hydra_status.board_state = HYDRA_BOARD_RESET;
 	board->ifstats.ifs_unit = 0;
@@ -333,7 +334,7 @@ mblk_t *mp;
     dl_unitdata_req_t *dp = (dl_unitdata_req_t *)mp->b_rptr;
     unsigned char *ap;
 
-    hydra_outb(nic, NE_CR, NE_CR_P0 | NE_CR_RDMA_ABORT | NE_CR_STA);
+    hydra_outb(nic, NE_CR, NE_CR_P0   | NE_CR_STA);
     if (hydra_inb(nic, NE_CR) & NE_CR_TXP)
 	return 0;
 
@@ -362,12 +363,12 @@ mblk_t *mp;
 
     info->tx_pkts_queued = 0;
 
-    hydra_outb(nic, NE_CR, NE_CR_P0 | NE_CR_RDMA_ABORT | NE_CR_STA);
+    hydra_outb(nic, NE_CR, NE_CR_P0   | NE_CR_STA);
     hydra_outb(nic, NE_RSAR0, 0);
     hydra_outb(nic, NE_RSAR1, info->tx_start_page);
     hydra_outb(nic, NE_RBCNT0, pktsize & 0xff);
     hydra_outb(nic, NE_RBCNT1, (pktsize >> 8) & 0xff);
-    hydra_outb(nic, NE_CR, NE_CR_P0 | NE_CR_RDMA_STORE | NE_CR_STA);
+    hydra_outb(nic, NE_CR, NE_CR_P0 | NE_CR_RDMA_WRITE | NE_CR_STA);
 
     hydra_rdma_write(nic, tmp, pktsize);
 
@@ -378,7 +379,7 @@ mblk_t *mp;
     hydra_outb(nic, NE_TPSR, info->tx_start_page);
     hydra_outb(nic, NE_TBCNT0, pktsize & 0xff);
     hydra_outb(nic, NE_TBCNT1, (pktsize >> 8) & 0xff);
-    hydra_outb(nic, NE_CR, NE_CR_P0 | NE_CR_RDMA_ABORT | NE_CR_TXP | NE_CR_STA);
+    hydra_outb(nic, NE_CR, NE_CR_P0   | NE_CR_TXP | NE_CR_STA);
 
     board->hydra_status.packets_sent++;
     board->ifstats.ifs_opackets++;
@@ -701,28 +702,10 @@ mblk_t *mp;
     }
 
     case SIOCSIFFLAGS:
-	board->if_flags = ((struct ifreq *)mp->b_cont->b_rptr)->ifr_flags;
-	mp->b_datap->db_type = M_IOCACK;
-	freemsg(unlinkb(mp));
-	iocbp->ioc_count = 0;
-	iocbp->ioc_rval = 0;
-	iocbp->ioc_error = 0;
-	putnext(RD(q), mp);
-	return;
-
     case SIOCGIFFLAGS:
-    {
-	struct ifreq *ifrp = (struct ifreq *)mp->b_cont->b_rptr;
-	cmn_err(CE_NOTE, "hya%d: SIOCGIFFLAGS (flags=0x%x state=%d)",
-		hp->board_index, board->if_flags, hp->state);
-	ifrp->ifr_flags = board->if_flags;
 	mp->b_datap->db_type = M_IOCACK;
-	iocbp->ioc_count = sizeof(struct ifreq);
-	iocbp->ioc_rval = 0;
-	iocbp->ioc_error = 0;
 	putnext(RD(q), mp);
 	return;
-    }
 
     case IF_UNITSEL:
     default:
@@ -954,7 +937,7 @@ hydraintr()
 	{
 	    volatile unsigned char *nic = board->hydra_info.nic_base;
 
-	    hydra_outb(nic, NE_CR, NE_CR_P0 | NE_CR_RDMA_ABORT | NE_CR_STA);
+	    hydra_outb(nic, NE_CR, NE_CR_P0   | NE_CR_STA);
 	    status = hydra_inb(nic, NE_ISR);
 
 	    if (status == 0)
@@ -1028,13 +1011,13 @@ int board_index;
     unsigned char rsr;
     int next_frame;
 
-    hydra_outb(nic, NE_CR, NE_CR_P0 | NE_CR_RDMA_ABORT | NE_CR_STA);
+    hydra_outb(nic, NE_CR, NE_CR_P0   | NE_CR_STA);
 
     while (1)
     {
 	hydra_outb(nic, NE_CR, NE_CR_P1 | NE_CR_STA);
 	curr = hydra_inb(nic, NE_CURR);
-	hydra_outb(nic, NE_CR, NE_CR_P0 | NE_CR_RDMA_ABORT | NE_CR_STA);
+	hydra_outb(nic, NE_CR, NE_CR_P0   | NE_CR_STA);
 	boundary = hydra_inb(nic, NE_BNRY);
 
 	next_frame = info->next_pkt;
@@ -1046,7 +1029,7 @@ int board_index;
 	hydra_outb(nic, NE_RSAR1, next_frame);
 	hydra_outb(nic, NE_RBCNT0, 4);
 	hydra_outb(nic, NE_RBCNT1, 0);
-	hydra_outb(nic, NE_CR, NE_CR_P0 | NE_CR_RDMA_PULL | NE_CR_STA);
+	hydra_outb(nic, NE_CR, NE_CR_P0 | NE_CR_RDMA_READ | NE_CR_STA);
 
 	{
 	    unsigned char header[4];
@@ -1065,8 +1048,12 @@ int board_index;
 	    board->hydra_status.rx_errors++;
 	    board->ifstats.ifs_ierrors++;
 	    info->next_pkt = next_frame;
-	    hydra_outb(nic, NE_BNRY,
-		       (next_frame - 1 + NE8390_STOP_PG) & (NE8390_STOP_PG - 1));
+	    {
+		int bnry = next_frame - 1;
+		if (bnry < NE8390_RX_START_PG)
+		    bnry = NE8390_STOP_PG - 1;
+		hydra_outb(nic, NE_BNRY, bnry);
+	    }
 	    continue;
 	}
 
@@ -1076,8 +1063,12 @@ int board_index;
 	{
 	    board->hydra_status.buffer_error++;
 	    info->next_pkt = next_frame;
-	    hydra_outb(nic, NE_BNRY,
-		       (next_frame - 1 + NE8390_STOP_PG) & (NE8390_STOP_PG - 1));
+	    {
+		int bnry = next_frame - 1;
+		if (bnry < NE8390_RX_START_PG)
+		    bnry = NE8390_STOP_PG - 1;
+		hydra_outb(nic, NE_BNRY, bnry);
+	    }
 	    continue;
 	}
 
@@ -1093,7 +1084,7 @@ int board_index;
 		hydra_outb(nic, NE_RSAR1, info->next_pkt);
 		hydra_outb(nic, NE_RBCNT0, semi & 0xff);
 		hydra_outb(nic, NE_RBCNT1, (semi >> 8) & 0xff);
-		hydra_outb(nic, NE_CR, NE_CR_P0 | NE_CR_RDMA_PULL | NE_CR_STA);
+		hydra_outb(nic, NE_CR, NE_CR_P0 | NE_CR_RDMA_READ | NE_CR_STA);
 		hydra_rdma_read(nic, rxbuff, semi);
 		while (!(hydra_inb(nic, NE_ISR) & NE_ISR_RDC))
 		    ;
@@ -1103,7 +1094,7 @@ int board_index;
 		hydra_outb(nic, NE_RSAR1, info->rx_start_page);
 		hydra_outb(nic, NE_RBCNT0, (pktsize - semi) & 0xff);
 		hydra_outb(nic, NE_RBCNT1, ((pktsize - semi) >> 8) & 0xff);
-		hydra_outb(nic, NE_CR, NE_CR_P0 | NE_CR_RDMA_PULL | NE_CR_STA);
+		hydra_outb(nic, NE_CR, NE_CR_P0 | NE_CR_RDMA_READ | NE_CR_STA);
 		hydra_rdma_read(nic, rxbuff + semi, pktsize - semi);
 		while (!(hydra_inb(nic, NE_ISR) & NE_ISR_RDC))
 		    ;
@@ -1115,7 +1106,7 @@ int board_index;
 		hydra_outb(nic, NE_RSAR1, info->next_pkt);
 		hydra_outb(nic, NE_RBCNT0, pktsize & 0xff);
 		hydra_outb(nic, NE_RBCNT1, (pktsize >> 8) & 0xff);
-		hydra_outb(nic, NE_CR, NE_CR_P0 | NE_CR_RDMA_PULL | NE_CR_STA);
+		hydra_outb(nic, NE_CR, NE_CR_P0 | NE_CR_RDMA_READ | NE_CR_STA);
 		hydra_rdma_read(nic, rxbuff, pktsize);
 		while (!(hydra_inb(nic, NE_ISR) & NE_ISR_RDC))
 		    ;
@@ -1134,8 +1125,12 @@ int board_index;
 	    board->hydra_status.overflow++;
 
 	info->next_pkt = next_frame;
-	hydra_outb(nic, NE_BNRY,
-		   (next_frame - 1 + NE8390_STOP_PG) & (NE8390_STOP_PG - 1));
+	{
+	    int bnry = next_frame - 1;
+	    if (bnry < NE8390_RX_START_PG)
+		bnry = NE8390_STOP_PG - 1;
+	    hydra_outb(nic, NE_BNRY, bnry);
+	}
 
 	toss_packet_up_stream(rxbuff, board_index, pktsize);
     }
@@ -1579,7 +1574,7 @@ unsigned char ethernet_address[6];
 
     hydra_reset(board_index);
 
-    hydra_outb(nic, NE_CR, NE_CR_P0 | NE_CR_STP | NE_CR_RDMA_ABORT);
+    hydra_outb(nic, NE_CR, NE_CR_P0 | NE_CR_STP  );
     DELAY(10);
 
     hydra_outb(nic, NE_DCR, NE_DCR_BOS | NE_DCR_LAS | NE_DCR_FT1);
@@ -1601,7 +1596,8 @@ unsigned char ethernet_address[6];
     hydra_outb(nic, NE_CURR, info->rx_start_page);
 
     hydra_outb(nic, NE_CR, NE_CR_P0 | NE_CR_STA);
-    hydra_outb(nic, NE_CR, NE_CR_P0 | NE_CR_RDMA_ABORT | NE_CR_STA);
+    hydra_outb(nic, NE_IMR, 0x1f);  /* enable PRX, PTX, RXE, TXE, OVW */
+    hydra_outb(nic, NE_CR, NE_CR_P0 | NE_CR_STA);
 
     board->hydra_status.board_state = HYDRA_BOARD_RUNNING;
     board->hydra_status.packets_sent = 0;
@@ -1632,7 +1628,7 @@ int board_index;
     volatile unsigned char *nic = board->hydra_info.nic_base;
     int i;
 
-    hydra_outb(nic, NE_CR, NE_CR_P0 | NE_CR_STP | NE_CR_RDMA_ABORT);
+    hydra_outb(nic, NE_CR, NE_CR_P0 | NE_CR_STP  );
     for (i = 0; i < 100; i++)
     {
 	DELAY(1);

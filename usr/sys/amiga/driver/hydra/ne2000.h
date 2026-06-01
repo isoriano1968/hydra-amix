@@ -54,18 +54,29 @@
 #define NE_MAR7          0x0f
 
 /*
-** Command Register (CR) bits
+** Command Register (CR) bits — DP8390 datasheet bit assignments:
+**   bit 0: STP  (Stop)
+**   bit 1: STA  (Start)
+**   bit 2: TXP  (Transmit)
+**   bits 3-5: RD0-RD2 (Remote DMA control):
+**     000 = abort, 001 = remote read, 010 = remote write
+**   bits 6-7: PS0-PS1 (Page select)
 */
 #define NE_CR_P0         0x00
 #define NE_CR_P1         0x40
 #define NE_CR_P2         0x80
 #define NE_CR_PS         0xc0
-#define NE_CR_STA        0x01
-#define NE_CR_STP        0x02
+#define NE_CR_STP        0x01
+#define NE_CR_STA        0x02
 #define NE_CR_TXP        0x04
-#define NE_CR_RDMA_ABORT 0x08
-#define NE_CR_RDMA_PULL  0x10
-#define NE_CR_RDMA_STORE 0x20
+#define NE_CR_RDMA_READ  0x08
+#define NE_CR_RDMA_WRITE 0x10
+
+/*
+** Interrupt Mask Register (IMR, page 0, write at offset 0x0f)
+** Uses the same bit positions as ISR.
+*/
+#define NE_IMR           0x0f
 
 /*
 ** Interrupt Status Register (ISR) bits
