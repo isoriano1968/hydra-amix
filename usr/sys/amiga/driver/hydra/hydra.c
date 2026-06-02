@@ -1372,8 +1372,8 @@ hydraautoconfig()
     {
 	if (autocon(NE8390_BOARD_ID, i, &addr, &size))
 	{
-		hydra_autoconfig[hydra_number_of_boards].address = addr;
-		hydra_number_of_boards++;
+	    hydra_autoconfig[hydra_number_of_boards].address = addr;
+	    hydra_number_of_boards++;
 	    n++;
 	}
 	else
@@ -1383,8 +1383,15 @@ hydraautoconfig()
     {
 	cmn_err(CE_NOTE, "hydra: found %d board(s) via autocon", n);
 	for (i = 0; i < n; i++)
-	    cmn_err(CE_NOTE, "hydra:   board %d at 0x%08lx",
-		    i, hydra_autoconfig[i].address);
+	{
+	    unsigned char mac[6];
+	    int j;
+	    unsigned long a = hydra_autoconfig[i].address;
+	    for (j = 0; j < 6; j++)
+		mac[j] = *(volatile unsigned char *)(a + 0xffc0 + j * 2);
+	    cmn_err(CE_NOTE, "hydra:   board %d at 0x%08lx MAC %02x:%02x:%02x:%02x:%02x:%02x",
+		    i, a, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+	}
 	return;
     }
 
@@ -1415,8 +1422,15 @@ hydraautoconfig()
     {
 	cmn_err(CE_NOTE, "hydra: found %d board(s) via AutoConfig decode", n);
 	for (i = 0; i < n; i++)
-	    cmn_err(CE_NOTE, "hydra:   board %d at 0x%08lx",
-		    i, hydra_autoconfig[i].address);
+	{
+	    unsigned char mac[6];
+	    int j;
+	    unsigned long a = hydra_autoconfig[i].address;
+	    for (j = 0; j < 6; j++)
+		mac[j] = *(volatile unsigned char *)(a + 0xffc0 + j * 2);
+	    cmn_err(CE_NOTE, "hydra:   board %d at 0x%08lx MAC %02x:%02x:%02x:%02x:%02x:%02x",
+		    i, a, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+	}
 	return;
     }
 
