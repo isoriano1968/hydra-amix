@@ -1292,6 +1292,29 @@ int board_index;
 }
 
 static void
+dump_ethernet_prom(base)
+long base;
+{
+    int i, all_same;
+    unsigned char buf[64];
+
+    for (i = 0; i < 64; i++)
+	buf[i] = *(volatile unsigned char *)(base + NE8390_ADDRPROM_OFFSET + i);
+
+    all_same = 1;
+    for (i = 1; i < 64; i++)
+	if (buf[i] != buf[0]) { all_same = 0; break; }
+
+    cmn_err(CE_NOTE, "hydra: PROM dump 0xFFC0-0xFFFF (%s):",
+	    all_same ? "ALL SAME" : "varies");
+    for (i = 0; i < 8; i++)
+	cmn_err(CE_NOTE, "hydra:   %02x: %02x %02x %02x %02x %02x %02x %02x %02x",
+		i * 8,
+		buf[i*8], buf[i*8+1], buf[i*8+2], buf[i*8+3],
+		buf[i*8+4], buf[i*8+5], buf[i*8+6], buf[i*8+7]);
+}
+
+static void
 get_ethernet_address(base, physical_ethernet_address)
 long base;
 unsigned char physical_ethernet_address[6];
@@ -1391,6 +1414,7 @@ hydraautoconfig()
 		mac[j] = *(volatile unsigned char *)(a + NE8390_ADDRPROM_OFFSET + j * 2);
 	    cmn_err(CE_NOTE, "hydra:   board %d at 0x%08lx MAC %02x:%02x:%02x:%02x:%02x:%02x",
 		    i, a, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+	    dump_ethernet_prom(a);
 	}
 	return;
     }
@@ -1430,6 +1454,7 @@ hydraautoconfig()
 		mac[j] = *(volatile unsigned char *)(a + NE8390_ADDRPROM_OFFSET + j * 2);
 	    cmn_err(CE_NOTE, "hydra:   board %d at 0x%08lx MAC %02x:%02x:%02x:%02x:%02x:%02x",
 		    i, a, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+	    dump_ethernet_prom(a);
 	}
 	return;
     }
@@ -1461,6 +1486,7 @@ hydraautoconfig()
 
 	cmn_err(CE_NOTE, "hydra: slot %d (base 0x%08lx) MAC %02x:%02x:%02x:%02x:%02x:%02x",
 		slot, base, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+	dump_ethernet_prom(base);
 
 	if (hydra_number_of_boards < HYDRA_MAXBOARDS)
 	{
@@ -1509,6 +1535,8 @@ int board_index;
 
     bcopy((caddr_t)paddress, (caddr_t)board->hydra_info.paddress,
 	  sizeof(board->hydra_info.paddress));
+
+    dump_ethernet_prom((long)board->hydra_info.board_base);
 
     return setup_ne2000(board_index, paddress);
 }
