@@ -1422,7 +1422,7 @@ unsigned char mac[6];
 void
 hydraautoconfig()
 {
-    int i, slot, n;
+    int i, n;
     long addr, size;
     static int hydraautoconfigured;
 
@@ -1433,101 +1433,42 @@ hydraautoconfig()
     hydra_number_of_boards = 0;
     cmn_err(CE_NOTE, "hydra: probing for Hydra Systems AmigaNet");
 
-    /* Method 1: Zorro II memory space 0x200000-0x9FFFFF (primary) */
-    n = 0;
-    for (slot = 0; slot < 128; slot++)
-    {
-	unsigned long base = ZII_MEM_BASE + slot * ZII_STEP;
-	unsigned char mac[6];
-
-	if (!probe_mac(base, mac))
-	    continue;
-
-	cmn_err(CE_NOTE, "hydra: slot %d (0x%08lx) MAC %02x:%02x:%02x:%02x:%02x:%02x",
-		slot, base, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-	dump_ethernet_prom(base);
-
-	if (hydra_number_of_boards < HYDRA_MAXBOARDS)
-	{
-	    hydra_autoconfig[hydra_number_of_boards].address = base;
-	    hydra_number_of_boards++;
-	    n++;
-	}
-    }
-    if (n > 0)
-    {
-	cmn_err(CE_NOTE, "hydra: found %d board(s) via Zorro II memory probe", n);
-	return;
-    }
-
-    /* Method 2: Zorro II I/O space 0xE80000-0xEFFFFF (FS-UAE compatibility) */
-    n = 0;
-    for (slot = 0; slot < 8; slot++)
-    {
-	unsigned long base = ZII_IO_BASE + slot * ZII_STEP;
-	unsigned char mac[6];
-
-	if (!probe_mac(base, mac))
-	    continue;
-
-	cmn_err(CE_NOTE, "hydra: I/O slot %d (0x%08lx) MAC %02x:%02x:%02x:%02x:%02x:%02x",
-		slot, base, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-	dump_ethernet_prom(base);
-
-	if (hydra_number_of_boards < HYDRA_MAXBOARDS)
-	{
-	    hydra_autoconfig[hydra_number_of_boards].address = base;
-	    hydra_number_of_boards++;
-	    n++;
-	}
-    }
-    if (n > 0)
-    {
-	cmn_err(CE_NOTE, "hydra: found %d board(s) via Zorro II I/O probe", n);
-	return;
-    }
-
-    /* Method 3: AutoConfig ROM decode (identifies board, no configured addr) */
-    for (slot = 0; slot < 8; slot++)
-    {
-	unsigned long base = ZII_AC_BASE + slot * ZII_STEP;
-	volatile unsigned char *mem = (volatile unsigned char *)base;
-
-	if (ac_match_board(mem))
-	{
-	    unsigned short manuf = ac_word(mem, AC_MANUF);
-	    unsigned char prod   = ac_byte(mem, AC_PRODUCT);
-	    cmn_err(CE_NOTE, "hydra: slot %d AutoConfig %04X:%02X at 0x%08lx",
-		    slot, manuf, prod, base);
-	}
-    }
-
-    /* Method 4: autocon() bootinfo table (diagnostic) */
+    /* Method 1: autocon() from bootinfo.autocon[] ConfigDev table */
     n = 0;
     for (i = 0; i < HYDRA_MAXBOARDS; i++)
     {
-	int ret;
-	ret = autocon(NE8390_BOARD_ID, i, &addr, &size);
-	cmn_err(CE_NOTE, "hydra: autocon(%d) -> ret=%d addr=0x%08lx size=%ld",
-		i, ret, addr, size);
-	if (!ret) break;
-	if (addr >= ZII_MEM_BASE && addr <= ZII_IO_END + 0xFFFF)
-	{
-	    unsigned char mac[6];
-	    if (probe_mac(addr, mac))
-	    {
-		cmn_err(CE_NOTE, "hydra:   validated MAC %02x:%02x:%02x:%02x:%02x:%02x",
-			mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-		hydra_autoconfig[hydra_number_of_boards].address = addr;
-		hydra_number_of_boards++;
-		n++;
-	    }
-	}
+	if (!autocon(NE8390_BOARD_ID, i, &addr, &size))
+	    break;
+	cmn_err(CE_NOTE, "hydra: board %d at 0x%08lx size=%ld",
+		i, addr, size);
+	hydra_autoconfig[hydra_number_of_boards].address = addr;
+	hydra_number_of_boards++;
+	n++;
     }
     if (n > 0)
     {
 	cmn_err(CE_NOTE, "hydra: found %d board(s) via autocon", n);
+	for (i = 0; i < n; i++)
+	    dump_ethernet_prom(hydra_autoconfig[i].address);
 	return;
+    }
+
+    /* Method 2: Autoconfig ROM decode at Zorro II I/O slots */
+    {
+	int slot;
+	for (slot = 0; slot < 8; slot++)
+	{
+	    unsigned long base = 0x00E90000UL + slot * 0x10000UL;
+	    volatile unsigned char *mem = (volatile unsigned char *)base;
+
+	    if (ac_match_board(mem))
+	    {
+		unsigned short manuf = ac_word(mem, AC_MANUF);
+		unsigned char prod   = ac_byte(mem, AC_PRODUCT);
+		cmn_err(CE_NOTE, "hydra: slot %d AutoConfig %04X:%02X at 0x%08lx",
+			slot, manuf, prod, base);
+	    }
+	}
     }
 
     cmn_err(CE_NOTE, "hydra: no board found");
