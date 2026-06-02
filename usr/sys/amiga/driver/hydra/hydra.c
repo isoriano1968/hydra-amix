@@ -1389,37 +1389,50 @@ hydraautoconfig()
     hydra_number_of_boards = 0;
     cmn_err(CE_NOTE, "hydra: probing for Hydra Systems AmigaNet");
 
-    /* Method 1: autocon() using bootinfo table */
+    /* Method 1: Direct Zorro II slot probe (MAC at PROM offset) */
     n = 0;
-    for (i = 0; i < HYDRA_MAXBOARDS; i++)
+    for (slot = 0; slot < 8; slot++)
     {
-	if (autocon(NE8390_BOARD_ID, i, &addr, &size))
+	unsigned long base = 0x00E80000UL + slot * 0x10000UL;
+	unsigned char mac[6];
+	int valid;
+
+	for (i = 0; i < 6; i++)
+	    mac[i] = *(volatile unsigned char *)(base + NE8390_ADDRPROM_OFFSET + i * 2);
+
+	valid = 1;
+	for (i = 0; i < 6; i++)
+	    if (mac[i] != 0xFF) break;
+	if (i == 6) valid = 0;            /* all 0xFF = bus float */
+	for (i = 0; i < 6; i++)
+	    if (mac[i] != 0x00) break;
+	if (i == 6) valid = 0;            /* all 0x00 = no PROM */
+	for (i = 1; i < 6; i++)
+	    if (mac[i] != mac[0]) break;
+	if (i == 6) valid = 0;            /* all same = invalid */
+	if (mac[0] & 0x01) valid = 0;     /* multicast bit must be 0 */
+
+	if (!valid)
+	    continue;
+
+	cmn_err(CE_NOTE, "hydra: slot %d (base 0x%08lx) MAC %02x:%02x:%02x:%02x:%02x:%02x",
+		slot, base, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+	dump_ethernet_prom(base);
+
+	if (hydra_number_of_boards < HYDRA_MAXBOARDS)
 	{
-	    hydra_autoconfig[hydra_number_of_boards].address = addr;
+	    hydra_autoconfig[hydra_number_of_boards].address = base;
 	    hydra_number_of_boards++;
 	    n++;
 	}
-	else
-	    break;
     }
     if (n > 0)
     {
-	cmn_err(CE_NOTE, "hydra: found %d board(s) via autocon", n);
-	for (i = 0; i < n; i++)
-	{
-	    unsigned char mac[6];
-	    int j;
-	    unsigned long a = hydra_autoconfig[i].address;
-	    for (j = 0; j < 6; j++)
-		mac[j] = *(volatile unsigned char *)(a + NE8390_ADDRPROM_OFFSET + j * 2);
-	    cmn_err(CE_NOTE, "hydra:   board %d at 0x%08lx MAC %02x:%02x:%02x:%02x:%02x:%02x",
-		    i, a, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-	    dump_ethernet_prom(a);
-	}
+	cmn_err(CE_NOTE, "hydra: found %d board(s) via Zorro II probe", n);
 	return;
     }
 
-    /* Method 1a: Direct AutoConfig ROM decode at Zorro II I/O slots */
+    /* Method 2: Direct AutoConfig ROM decode at Zorro II I/O slots */
     n = 0;
     for (slot = 0; slot < 8; slot++)
     {
@@ -1459,48 +1472,33 @@ hydraautoconfig()
 	return;
     }
 
-    /* Method 2: Direct Zorro II slot probe (MAC at PROM offset) */
+    /* Method 3: autocon() using bootinfo table (least reliable) */
     n = 0;
-    for (slot = 0; slot < 8; slot++)
+    for (i = 0; i < HYDRA_MAXBOARDS; i++)
     {
-	unsigned long base = 0x00E80000UL + slot * 0x10000UL;
-	unsigned char mac[6];
-	int valid;
-
-	for (i = 0; i < 6; i++)
-	    mac[i] = *(volatile unsigned char *)(base + NE8390_ADDRPROM_OFFSET + i * 2);
-
-	valid = 1;
-	for (i = 0; i < 6; i++)
-	    if (mac[i] != 0xFF) break;
-	if (i == 6) valid = 0;            /* all 0xFF = bus float */
-	for (i = 0; i < 6; i++)
-	    if (mac[i] != 0x00) break;
-	if (i == 6) valid = 0;            /* all 0x00 = no PROM */
-	for (i = 1; i < 6; i++)
-	    if (mac[i] != mac[0]) break;
-	if (i == 6) valid = 0;            /* all same = invalid */
-
-	if (!valid)
-	    continue;
-
-	cmn_err(CE_NOTE, "hydra: slot %d (base 0x%08lx) MAC %02x:%02x:%02x:%02x:%02x:%02x",
-		slot, base, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-	dump_ethernet_prom(base);
-
-	if (hydra_number_of_boards < HYDRA_MAXBOARDS)
-	{
-	    hydra_autoconfig[hydra_number_of_boards].address = base;
-	    hydra_number_of_boards++;
-	    n++;
-	}
+	int ret;
+	ret = autocon(NE8390_BOARD_ID, i, &addr, &size);
+	cmn_err(CE_NOTE, "hydra: autocon(%d) -> ret=%d addr=0x%08lx size=%ld",
+		i, ret, addr, size);
+	if (!ret) break;
+	hydra_autoconfig[hydra_number_of_boards].address = addr;
+	hydra_number_of_boards++;
+	n++;
     }
     if (n > 0)
     {
-	cmn_err(CE_NOTE, "hydra: found %d board(s) via Zorro II probe", n);
+	cmn_err(CE_NOTE, "hydra: found %d board(s) via autocon", n);
 	for (i = 0; i < n; i++)
-	    cmn_err(CE_NOTE, "hydra:   board %d at 0x%08lx",
-		    i, hydra_autoconfig[i].address);
+	{
+	    unsigned char mac[6];
+	    int j;
+	    unsigned long a = hydra_autoconfig[i].address;
+	    for (j = 0; j < 6; j++)
+		mac[j] = *(volatile unsigned char *)(a + NE8390_ADDRPROM_OFFSET + j * 2);
+	    cmn_err(CE_NOTE, "hydra:   board %d at 0x%08lx MAC %02x:%02x:%02x:%02x:%02x:%02x",
+		    i, a, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+	    dump_ethernet_prom(a);
+	}
 	return;
     }
 
