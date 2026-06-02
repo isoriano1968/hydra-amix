@@ -1388,7 +1388,7 @@ hydraautoconfig()
 	    int j;
 	    unsigned long a = hydra_autoconfig[i].address;
 	    for (j = 0; j < 6; j++)
-		mac[j] = *(volatile unsigned char *)(a + 0xffc0 + j * 2);
+		mac[j] = *(volatile unsigned char *)(a + NE8390_ADDRPROM_OFFSET + j * 2);
 	    cmn_err(CE_NOTE, "hydra:   board %d at 0x%08lx MAC %02x:%02x:%02x:%02x:%02x:%02x",
 		    i, a, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 	}
@@ -1427,14 +1427,14 @@ hydraautoconfig()
 	    int j;
 	    unsigned long a = hydra_autoconfig[i].address;
 	    for (j = 0; j < 6; j++)
-		mac[j] = *(volatile unsigned char *)(a + 0xffc0 + j * 2);
+		mac[j] = *(volatile unsigned char *)(a + NE8390_ADDRPROM_OFFSET + j * 2);
 	    cmn_err(CE_NOTE, "hydra:   board %d at 0x%08lx MAC %02x:%02x:%02x:%02x:%02x:%02x",
 		    i, a, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 	}
 	return;
     }
 
-    /* Method 2: Direct Zorro II slot probe (MAC at +0xffc0) */
+    /* Method 2: Direct Zorro II slot probe (MAC at PROM offset) */
     n = 0;
     for (slot = 0; slot < 8; slot++)
     {
@@ -1443,7 +1443,7 @@ hydraautoconfig()
 	int valid;
 
 	for (i = 0; i < 6; i++)
-	    mac[i] = *(volatile unsigned char *)(base + 0xffc0 + i * 2);
+	    mac[i] = *(volatile unsigned char *)(base + NE8390_ADDRPROM_OFFSET + i * 2);
 
 	valid = 1;
 	for (i = 0; i < 6; i++)
