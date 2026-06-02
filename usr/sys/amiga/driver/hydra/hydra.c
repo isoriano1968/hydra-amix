@@ -1375,50 +1375,6 @@ ac_match_board(volatile unsigned char *mem)
     }
 }
 
-/* Validate 6-byte MAC read from PROM offset */
-static int
-mac_valid(mac)
-unsigned char mac[6];
-{
-    int i;
-    for (i = 0; i < 6; i++)
-	if (mac[i] != 0xFF) break;
-    if (i == 6) return 0;        /* all 0xFF = bus float */
-    for (i = 0; i < 6; i++)
-	if (mac[i] != 0x00) break;
-    if (i == 6) return 0;        /* all 0x00 = no PROM */
-    for (i = 1; i < 6; i++)
-	if (mac[i] != mac[0]) break;
-    if (i == 6) return 0;        /* all same = invalid bus */
-    if (mac[0] & 0x01) return 0; /* multicast bit must be 0 */
-    return 1;
-}
-
-static int
-probe_mac(base, mac)
-unsigned long base;
-unsigned char mac[6];
-{
-    int j;
-    for (j = 0; j < 6; j++)
-	mac[j] = *(volatile unsigned char *)(base + NE8390_ADDRPROM_OFFSET + j * 2);
-    return mac_valid(mac);
-}
-
-/*
- * Zorro II physical address ranges (AMIX on A3000).
- * Memory space: 0x200000 - 0x9FFFFF (128 x 64KB slots).
- * I/O space:    0xE80000 - 0xEFFFFF (8 x 64KB slots, used on FS-UAE).
- * Autoconfig:   0xE90000 - 0xEFFFFF (8 x 64KB, ROM shunt addresses).
- */
-#define ZII_MEM_BASE    0x00200000UL
-#define ZII_MEM_END     0x009F0000UL
-#define ZII_IO_BASE     0x00E80000UL
-#define ZII_IO_END      0x00EF0000UL
-#define ZII_AC_BASE     0x00E90000UL
-#define ZII_AC_END      0x00EF0000UL
-#define ZII_STEP        0x00010000UL
-
 void
 hydraautoconfig()
 {
