@@ -129,7 +129,7 @@
 ** Hydra board-specific constants
 */
 #define NE8390_NIC_OFFSET     0xffe1
-#define NE8390_ADDRPROM_OFFSET 0xffc1
+#define NE8390_ADDRPROM_OFFSET 0xffc0
 
 #define NE8390_START_PG  0x00
 #define NE8390_STOP_PG   0x40
