@@ -1375,6 +1375,50 @@ ac_match_board(volatile unsigned char *mem)
     }
 }
 
+/* Validate 6-byte MAC read from PROM offset */
+static int
+mac_valid(mac)
+unsigned char mac[6];
+{
+    int i;
+    for (i = 0; i < 6; i++)
+	if (mac[i] != 0xFF) break;
+    if (i == 6) return 0;        /* all 0xFF = bus float */
+    for (i = 0; i < 6; i++)
+	if (mac[i] != 0x00) break;
+    if (i == 6) return 0;        /* all 0x00 = no PROM */
+    for (i = 1; i < 6; i++)
+	if (mac[i] != mac[0]) break;
+    if (i == 6) return 0;        /* all same = invalid bus */
+    if (mac[0] & 0x01) return 0; /* multicast bit must be 0 */
+    return 1;
+}
+
+static int
+probe_mac(base, mac)
+unsigned long base;
+unsigned char mac[6];
+{
+    int j;
+    for (j = 0; j < 6; j++)
+	mac[j] = *(volatile unsigned char *)(base + NE8390_ADDRPROM_OFFSET + j * 2);
+    return mac_valid(mac);
+}
+
+/*
+ * Zorro II physical address ranges (AMIX on A3000).
+ * Memory space: 0x200000 - 0x9FFFFF (128 x 64KB slots).
+ * I/O space:    0xE80000 - 0xEFFFFF (8 x 64KB slots, used on FS-UAE).
+ * Autoconfig:   0xE90000 - 0xEFFFFF (8 x 64KB, ROM shunt addresses).
+ */
+#define ZII_MEM_BASE    0x00200000UL
+#define ZII_MEM_END     0x009F0000UL
+#define ZII_IO_BASE     0x00E80000UL
+#define ZII_IO_END      0x00EF0000UL
+#define ZII_AC_BASE     0x00E90000UL
+#define ZII_AC_END      0x00EF0000UL
+#define ZII_STEP        0x00010000UL
+
 void
 hydraautoconfig()
 {
@@ -1389,33 +1433,17 @@ hydraautoconfig()
     hydra_number_of_boards = 0;
     cmn_err(CE_NOTE, "hydra: probing for Hydra Systems AmigaNet");
 
-    /* Method 1: Direct Zorro II slot probe (MAC at PROM offset) */
+    /* Method 1: Zorro II memory space 0x200000-0x9FFFFF (primary) */
     n = 0;
-    for (slot = 0; slot < 8; slot++)
+    for (slot = 0; slot < 128; slot++)
     {
-	unsigned long base = 0x00E80000UL + slot * 0x10000UL;
+	unsigned long base = ZII_MEM_BASE + slot * ZII_STEP;
 	unsigned char mac[6];
-	int valid;
 
-	for (i = 0; i < 6; i++)
-	    mac[i] = *(volatile unsigned char *)(base + NE8390_ADDRPROM_OFFSET + i * 2);
-
-	valid = 1;
-	for (i = 0; i < 6; i++)
-	    if (mac[i] != 0xFF) break;
-	if (i == 6) valid = 0;            /* all 0xFF = bus float */
-	for (i = 0; i < 6; i++)
-	    if (mac[i] != 0x00) break;
-	if (i == 6) valid = 0;            /* all 0x00 = no PROM */
-	for (i = 1; i < 6; i++)
-	    if (mac[i] != mac[0]) break;
-	if (i == 6) valid = 0;            /* all same = invalid */
-	if (mac[0] & 0x01) valid = 0;     /* multicast bit must be 0 */
-
-	if (!valid)
+	if (!probe_mac(base, mac))
 	    continue;
 
-	cmn_err(CE_NOTE, "hydra: slot %d (base 0x%08lx) MAC %02x:%02x:%02x:%02x:%02x:%02x",
+	cmn_err(CE_NOTE, "hydra: slot %d (0x%08lx) MAC %02x:%02x:%02x:%02x:%02x:%02x",
 		slot, base, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 	dump_ethernet_prom(base);
 
@@ -1428,51 +1456,53 @@ hydraautoconfig()
     }
     if (n > 0)
     {
-	cmn_err(CE_NOTE, "hydra: found %d board(s) via Zorro II probe", n);
+	cmn_err(CE_NOTE, "hydra: found %d board(s) via Zorro II memory probe", n);
 	return;
     }
 
-    /* Method 2: Direct AutoConfig ROM decode at Zorro II I/O slots */
+    /* Method 2: Zorro II I/O space 0xE80000-0xEFFFFF (FS-UAE compatibility) */
     n = 0;
     for (slot = 0; slot < 8; slot++)
     {
-	unsigned long base = 0x00E90000UL + slot * 0x10000UL;
+	unsigned long base = ZII_IO_BASE + slot * ZII_STEP;
+	unsigned char mac[6];
+
+	if (!probe_mac(base, mac))
+	    continue;
+
+	cmn_err(CE_NOTE, "hydra: I/O slot %d (0x%08lx) MAC %02x:%02x:%02x:%02x:%02x:%02x",
+		slot, base, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+	dump_ethernet_prom(base);
+
+	if (hydra_number_of_boards < HYDRA_MAXBOARDS)
+	{
+	    hydra_autoconfig[hydra_number_of_boards].address = base;
+	    hydra_number_of_boards++;
+	    n++;
+	}
+    }
+    if (n > 0)
+    {
+	cmn_err(CE_NOTE, "hydra: found %d board(s) via Zorro II I/O probe", n);
+	return;
+    }
+
+    /* Method 3: AutoConfig ROM decode (identifies board, no configured addr) */
+    for (slot = 0; slot < 8; slot++)
+    {
+	unsigned long base = ZII_AC_BASE + slot * ZII_STEP;
 	volatile unsigned char *mem = (volatile unsigned char *)base;
 
 	if (ac_match_board(mem))
 	{
 	    unsigned short manuf = ac_word(mem, AC_MANUF);
 	    unsigned char prod   = ac_byte(mem, AC_PRODUCT);
-
 	    cmn_err(CE_NOTE, "hydra: slot %d AutoConfig %04X:%02X at 0x%08lx",
 		    slot, manuf, prod, base);
-
-	    if (hydra_number_of_boards < HYDRA_MAXBOARDS)
-	    {
-		hydra_autoconfig[hydra_number_of_boards].address = base;
-		hydra_number_of_boards++;
-		n++;
-	    }
 	}
     }
-    if (n > 0)
-    {
-	cmn_err(CE_NOTE, "hydra: found %d board(s) via AutoConfig decode", n);
-	for (i = 0; i < n; i++)
-	{
-	    unsigned char mac[6];
-	    int j;
-	    unsigned long a = hydra_autoconfig[i].address;
-	    for (j = 0; j < 6; j++)
-		mac[j] = *(volatile unsigned char *)(a + NE8390_ADDRPROM_OFFSET + j * 2);
-	    cmn_err(CE_NOTE, "hydra:   board %d at 0x%08lx MAC %02x:%02x:%02x:%02x:%02x:%02x",
-		    i, a, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-	    dump_ethernet_prom(a);
-	}
-	return;
-    }
 
-    /* Method 3: autocon() using bootinfo table (least reliable) */
+    /* Method 4: autocon() bootinfo table (diagnostic) */
     n = 0;
     for (i = 0; i < HYDRA_MAXBOARDS; i++)
     {
@@ -1481,24 +1511,22 @@ hydraautoconfig()
 	cmn_err(CE_NOTE, "hydra: autocon(%d) -> ret=%d addr=0x%08lx size=%ld",
 		i, ret, addr, size);
 	if (!ret) break;
-	hydra_autoconfig[hydra_number_of_boards].address = addr;
-	hydra_number_of_boards++;
-	n++;
+	if (addr >= ZII_MEM_BASE && addr <= ZII_IO_END + 0xFFFF)
+	{
+	    unsigned char mac[6];
+	    if (probe_mac(addr, mac))
+	    {
+		cmn_err(CE_NOTE, "hydra:   validated MAC %02x:%02x:%02x:%02x:%02x:%02x",
+			mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+		hydra_autoconfig[hydra_number_of_boards].address = addr;
+		hydra_number_of_boards++;
+		n++;
+	    }
+	}
     }
     if (n > 0)
     {
 	cmn_err(CE_NOTE, "hydra: found %d board(s) via autocon", n);
-	for (i = 0; i < n; i++)
-	{
-	    unsigned char mac[6];
-	    int j;
-	    unsigned long a = hydra_autoconfig[i].address;
-	    for (j = 0; j < 6; j++)
-		mac[j] = *(volatile unsigned char *)(a + NE8390_ADDRPROM_OFFSET + j * 2);
-	    cmn_err(CE_NOTE, "hydra:   board %d at 0x%08lx MAC %02x:%02x:%02x:%02x:%02x:%02x",
-		    i, a, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-	    dump_ethernet_prom(a);
-	}
 	return;
     }
 
