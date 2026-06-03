@@ -62,7 +62,6 @@ typedef struct
     int             rx_start_page;
     int             stop_page;
     int             next_pkt;
-    int             tx_pkts_queued;
 } hydra_info_t;
 
 typedef struct

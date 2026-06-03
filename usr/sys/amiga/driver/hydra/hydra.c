@@ -14,8 +14,7 @@
 #include "sys/user.h"
 #include "sys/stream.h"
 #include "sys/stropts.h"
-#include "sys/strlog.h"
-#include "sys/log.h"
+
 #include "sys/queue.h"
 #include "sys/cio_defs.h"
 #include "sys/sbd.h"
@@ -32,7 +31,7 @@
 #include "hydrauser.h"
 #include "hydra.h"
 #include "ne2000.h"
-#include "../kdb/kdebug.h"
+
 
 extern struct ifstats *ifstats;
 
@@ -244,10 +243,6 @@ register queue_t *q;
 
     if (dev >= HYDRA_MAXDEV)
     {
-	STRLOG(0x6879, 0, 1, SL_TRACE,
-	       "hya[%d] Close called - halting NE2000\n",
-	       board_index);
-
 	hydra_outb(board->hydra_info.nic_base, NE_CR,
 		   NE_CR_P0 | NE_CR_STP  );
 
@@ -258,8 +253,7 @@ register queue_t *q;
 	board->ifstats.ifs_oerrors = 0;
     }
 
-    STRLOG(0x6879, 0, 1, SL_TRACE, "hya[%d] Closed\n",
-	   board->hydra_info.board_base);
+
 
     return 0;
 }
@@ -274,8 +268,6 @@ register mblk_t *mp;
     register hydra_board_t *board = &hydra_board[hp->board_index];
 
     s = splhydra();
-
-    STRLOG(0x6879, 0, 8, SL_TRACE, "hya[%d] wput called\n", hp->board_index);
 
     switch (mp->b_datap->db_type)
     {
@@ -303,8 +295,6 @@ register mblk_t *mp;
 	break;
 
     default:
-	STRLOG(0x6879, 0, 2, SL_ERROR | SL_WARN, "hya%d: bad msg type %d",
-	       hp->board_index, mp->b_datap->db_type);
 	freemsg(mp);
 	break;
     }
@@ -359,8 +349,6 @@ mblk_t *mp;
     if (pktsize < ETH_MINPACKET)
 	pktsize = ETH_MINPACKET;
 
-    info->tx_pkts_queued = 0;
-
     hydra_outb(nic, NE_CR, NE_CR_P0   | NE_CR_STA);
     hydra_outb(nic, NE_RSAR0, 0);
     hydra_outb(nic, NE_RSAR1, info->tx_start_page);
@@ -381,9 +369,6 @@ mblk_t *mp;
 
     board->hydra_status.packets_sent++;
     board->ifstats.ifs_opackets++;
-
-    STRLOG(0x6879, 0, 21, SL_TRACE,
-	   "hya[%d] sent pkt len=%d\n", hp->board_index, pktsize);
 
     return 1;
 }
@@ -417,288 +402,8 @@ mblk_t *mp;
 	}
     }
 
-    STRLOG(0x6879, 0, 7, SL_TRACE,
-	   "hya[%d]: %s message, command 0x%x\n", hp->board_index,
-	   (mp->b_datap->db_type == M_IOCDATA ? "IOCDATA" :
-	    mp->b_datap->db_type == M_IOCTL ? "IOCTL" : "??"), iocbp->ioc_cmd);
-
     switch (iocbp->ioc_cmd)
     {
-    case HYDRA_CLEAR_STATUS:
-	board->hydra_status.packets_sent = 0;
-	board->hydra_status.packets_received = 0;
-	board->hydra_status.allocbs_failed = 0;
-	board->hydra_status.couldnt_put = 0;
-	board->hydra_status.tx_errors = 0;
-	board->hydra_status.rx_errors = 0;
-	board->hydra_status.collisions = 0;
-	board->hydra_status.overflow = 0;
-	board->hydra_status.crc_errors = 0;
-	board->hydra_status.framing_errors = 0;
-	board->hydra_status.missed_packets = 0;
-	board->hydra_status.late_collisions = 0;
-	board->hydra_status.loss_of_carrier = 0;
-	board->hydra_status.retry_errors = 0;
-	freemsg(mp->b_cont);
-	break;
-
-    case HYDRA_GET_STATUS:
-    {
-	hydra_status_t *status;
-	caddr_t arg = *(caddr_t *)mp->b_cont->b_rptr;
-
-	freemsg(mp->b_cont);
-
-	mp->b_cont = allocb(sizeof(hydra_status_t), BPRI_MED);
-	if (!mp->b_cont)
-	{
-	    mp->b_datap->db_type = M_IOCNAK;
-	    freemsg(unlinkb(mp));
-	    iocbp->ioc_count = 0;
-	    iocbp->ioc_rval = 0;
-	    iocbp->ioc_error = ENOMEM;
-	    putnext(RD(q), mp);
-	    return;
-	}
-
-	status = (hydra_status_t *)mp->b_cont->b_rptr;
-	mp->b_cont->b_wptr += sizeof(hydra_status_t);
-
-	bcopy((caddr_t)&board->hydra_status, (caddr_t)status,
-	      sizeof(hydra_status_t));
-
-	if (mp->b_datap->db_type == M_IOCTL && iocbp->ioc_count == TRANSPARENT)
-	{
-	    struct copyreq *creq = (struct copyreq *)mp->b_rptr;
-	    mp->b_datap->db_type = M_COPYOUT;
-	    creq->cq_addr = arg;
-	    mp->b_wptr = mp->b_rptr + sizeof *creq;
-	    mp->b_cont->b_wptr = mp->b_cont->b_rptr + sizeof(hydra_status_t);
-	    creq->cq_size = sizeof(hydra_status_t);
-	    creq->cq_flag = 0;
-	    creq->cq_private = (mblk_t *)NULL;
-	    putnext(RD(q), mp);
-	    return;
-	}
-
-	break;
-    }
-
-    case HYDRA_GET_CONFIG:
-    {
-	hydra_config_t *hydra_config;
-	caddr_t arg = *(caddr_t *)mp->b_cont->b_rptr;
-
-	freemsg(mp->b_cont);
-
-	mp->b_cont = allocb(sizeof(hydra_config_t), BPRI_MED);
-	if (!mp->b_cont)
-	{
-	    mp->b_datap->db_type = M_IOCNAK;
-	    freemsg(unlinkb(mp));
-	    iocbp->ioc_count = 0;
-	    iocbp->ioc_rval = 0;
-	    iocbp->ioc_error = ENOMEM;
-	    putnext(RD(q), mp);
-	    return;
-	}
-
-	hydra_config = (hydra_config_t *)mp->b_cont->b_rptr;
-	mp->b_cont->b_wptr += sizeof(hydra_config_t);
-
-	hydra_config->board_debug = board->hydra_status.board_debug;
-	hydra_config->board_base = (long)board->hydra_info.board_base;
-	hydra_config->mode = 0;
-	hydra_config->flags = hp->flags;
-	bcopy((caddr_t)board->hydra_info.paddress,
-	      (caddr_t)hydra_config->paddress,
-	      sizeof(board->hydra_info.paddress));
-	bcopy((caddr_t)board->hydra_info.laddress,
-	      (caddr_t)hydra_config->laddress,
-	      sizeof(board->hydra_info.laddress));
-
-	if (mp->b_datap->db_type == M_IOCTL && iocbp->ioc_count == TRANSPARENT)
-	{
-	    struct copyreq *creq = (struct copyreq *)mp->b_rptr;
-	    mp->b_datap->db_type = M_COPYOUT;
-	    creq->cq_addr = arg;
-	    mp->b_wptr = mp->b_rptr + sizeof *creq;
-	    mp->b_cont->b_wptr = mp->b_cont->b_rptr + sizeof(hydra_config_t);
-	    creq->cq_size = sizeof(hydra_config_t);
-	    creq->cq_flag = 0;
-	    creq->cq_private = (mblk_t *)NULL;
-	    putnext(RD(q), mp);
-	    return;
-	}
-
-	break;
-    }
-
-    case HYDRA_SET_CONFIG:
-    {
-	hydra_config_t *hydra_config;
-
-	if (mp->b_datap->db_type == M_IOCTL && iocbp->ioc_count == TRANSPARENT)
-	{
-	    struct copyreq *creq = (struct copyreq *)mp->b_rptr;
-	    mp->b_datap->db_type = M_COPYIN;
-	    creq->cq_addr = *(caddr_t *)mp->b_cont->b_rptr;
-	    mp->b_wptr = mp->b_rptr + sizeof(*creq);
-	    creq->cq_size = sizeof(*hydra_config);
-	    creq->cq_flag = 0;
-	    creq->cq_private = (mblk_t *)1;
-	    putnext(RD(q), mp);
-	    return;
-	}
-	else
-	{
-	    mblk_t *bp1;
-	    register int i;
-
-	    (void)pullupmsg(mp->b_cont, -1);
-
-	    if (!mp->b_cont || blklen(mp->b_cont) != sizeof(*hydra_config))
-	    {
-		iocbp->ioc_error = EINVAL;
-		mp->b_datap->db_type = M_IOCNAK;
-		iocbp->ioc_count = 0;
-		putnext(RD(q), mp);
-		break;
-	    }
-
-	    hydra_config = (hydra_config_t *)mp->b_cont->b_rptr;
-
-	    board->hydra_status.board_debug = hydra_config->board_debug;
-
-	    mp->b_datap->db_type = M_IOCACK;
-
-	    hp->flags = hydra_config->flags;
-
-	    bp1 = unlinkb(mp);
-	    if (bp1)
-		freeb(bp1);
-	    iocbp->ioc_count = 0;
-	    putnext(RD(q), mp);
-
-	    for (i = 0; i < HYDRA_MAXDEV; i++)
-	    {
-		dl_bind_ack_t *bind_ackp;
-		dl_info_ack_t *info_ackp;
-
-		if (board->hydra[i].sap && board->hydra[i].q)
-		{
-		    if (!(mp = allocb(sizeof(*bind_ackp) +
-				    sizeof(board->hydra_info.paddress),
-				    BPRI_MED)))
-		    {
-			return;
-		    }
-
-		    mp->b_datap->db_type = M_PCPROTO;
-		    bind_ackp = (dl_bind_ack_t *)mp->b_wptr;
-		    bind_ackp->dl_primitive = DL_BIND_ACK;
-		    bind_ackp->dl_sap = hp->sap;
-		    bind_ackp->dl_addr_length =
-			sizeof(board->hydra_info.paddress);
-		    bind_ackp->dl_addr_offset = sizeof(*bind_ackp);
-		    bind_ackp->dl_max_conind = 0;
-		    bind_ackp->dl_growth = 0;
-		    mp->b_wptr += sizeof(*bind_ackp);
-
-		    bcopy((caddr_t)board->hydra_info.paddress,
-			  (caddr_t)mp->b_wptr,
-			  sizeof(board->hydra_info.paddress));
-
-		    mp->b_wptr += sizeof(board->hydra_info.paddress);
-
-		    qreply(WR(board->hydra[i].q), mp);
-
-		    if (!(mp = allocb(sizeof(dl_info_ack_t) +
-				      sizeof(board->hydra_info.paddress),
-				      BPRI_MED)))
-		    {
-			return;
-		    }
-
-		    mp->b_datap->db_type = M_PCPROTO;
-		    info_ackp = (dl_info_ack_t *)mp->b_wptr;
-		    info_ackp->dl_primitive = DL_INFO_ACK;
-		    info_ackp->dl_max_sdu = ETH_MAXDATA;
-		    info_ackp->dl_min_sdu = 1;
-		    info_ackp->dl_addr_length =
-			sizeof(board->hydra_info.paddress);
-		    info_ackp->dl_mac_type = DL_ETHER;
-		    info_ackp->dl_reserved = 0;
-		    info_ackp->dl_current_state = hp->state;
-		    info_ackp->dl_max_idu = ETH_MAXDATA;
-		    info_ackp->dl_service_mode = DL_CLDLS;
-		    info_ackp->dl_qos_length = 0;
-		    info_ackp->dl_qos_offset = 0;
-		    info_ackp->dl_qos_range_length = 0;
-		    info_ackp->dl_qos_range_offset = 0;
-		    info_ackp->dl_provider_style = DL_STYLE1;
-		    info_ackp->dl_growth = 0;
-		    if (hp->state == DL_IDLE)
-		    {
-			info_ackp->dl_addr_offset = sizeof(dl_info_ack_t);
-			mp->b_wptr += sizeof(dl_info_ack_t);
-			bcopy((caddr_t)board->hydra_info.paddress,
-			      (caddr_t)mp->b_wptr,
-			      sizeof(board->hydra_info.paddress));
-			mp->b_wptr += sizeof(board->hydra_info.paddress);
-		    }
-		    else
-		    {
-			info_ackp->dl_addr_offset = 0;
-			mp->b_wptr += sizeof(dl_info_ack_t);
-		    }
-
-		    qreply(WR(board->hydra[i].q), mp);
-		}
-	    }
-	}
-	break;
-    }
-
-    case HYDRA_NUMBER_OF_BOARDS:
-    {
-	caddr_t arg = *(caddr_t *)mp->b_cont->b_rptr;
-
-	freemsg(mp->b_cont);
-
-	mp->b_cont = allocb(sizeof(hydra_number_of_boards), BPRI_MED);
-	if (!mp->b_cont)
-	{
-	    mp->b_datap->db_type = M_IOCNAK;
-	    freemsg(unlinkb(mp));
-	    iocbp->ioc_count = 0;
-	    iocbp->ioc_rval = 0;
-	    iocbp->ioc_error = ENOMEM;
-	    putnext(RD(q), mp);
-	    return;
-	}
-
-	mp->b_cont->b_wptr += sizeof(int);
-
-	*(int *)mp->b_cont->b_rptr = hydra_number_of_boards;
-
-	if (mp->b_datap->db_type == M_IOCTL && iocbp->ioc_count == TRANSPARENT)
-	{
-	    struct copyreq *creq = (struct copyreq *)mp->b_rptr;
-	    mp->b_datap->db_type = M_COPYOUT;
-	    creq->cq_addr = arg;
-	    mp->b_wptr = mp->b_rptr + sizeof *creq;
-	    mp->b_cont->b_wptr = mp->b_cont->b_rptr + sizeof(int);
-	    creq->cq_size = sizeof(int);
-	    creq->cq_flag = 0;
-	    creq->cq_private = (mblk_t *)NULL;
-	    putnext(RD(q), mp);
-	    return;
-	}
-
-	break;
-    }
-
     case SIOCSIFFLAGS:
     case SIOCGIFFLAGS:
 	cmn_err(CE_NOTE, "hya%d: SIOC%s (if_flags=%x)",
@@ -738,9 +443,6 @@ mblk_t *mp;
     register hydra_t *hp = (hydra_t *)q->q_ptr;
     register hydra_board_t *board = &hydra_board[hp->board_index];
 
-    STRLOG(0x6879, 0, 8, SL_TRACE, "hya[%d] proto called (%d)\n",
-	   hp->board_index, p->dl_primitive);
-
     switch (p->dl_primitive)
     {
     case DL_UNITDATA_REQ:
@@ -754,9 +456,6 @@ mblk_t *mp;
 
 	    cmn_err(CE_NOTE, "hya%d: DL_ATTACH_REQ (state=%d)",
 		    hp->board_index, hp->state);
-
-	    STRLOG(0x6879, 0, 8, SL_TRACE, "hya[%d] Attach Request\n",
-		   hp->board_index);
 
 	    freemsg(mp);
 
@@ -785,9 +484,6 @@ mblk_t *mp;
 
 	    hp->sap = reqp->dl_sap;
 	    hp->state = DL_IDLE;
-
-	    STRLOG(0x6879, 0, 8, SL_TRACE, "hya[%d] Setting sap to 0x%x\n",
-		   hp->board_index, hp->sap);
 
 	    freemsg(mp);
 
@@ -867,9 +563,6 @@ mblk_t *mp;
 	{
 	    dl_ok_ack_t *okp;
 
-	    STRLOG(0x6879, 0, 8, SL_TRACE, "hya[%d] Unbind Request, sap=0x%x\n",
-		   hp->board_index, hp->sap);
-
 	    freemsg(mp);
 
 	    if (!(mp = allocb(sizeof(dl_ok_ack_t), BPRI_MED)))
@@ -892,9 +585,6 @@ mblk_t *mp;
 	{
 	    dl_ok_ack_t *okp;
 
-	    STRLOG(0x6879, 0, 8, SL_TRACE, "hya[%d] Detach Request\n",
-		   hp->board_index);
-
 	    freemsg(mp);
 
 	    if (!(mp = allocb(sizeof(dl_ok_ack_t), BPRI_MED)))
@@ -913,8 +603,6 @@ mblk_t *mp;
 	}
 
     default:
-	STRLOG(0x6879, 0, 2, SL_ERROR | SL_WARN,
-	       "hydraproto: unknown proto request: %d", (int)p->dl_primitive);
 	freemsg(mp);
 	return 1;
     }
@@ -944,9 +632,6 @@ hydraintr()
 
 	    if (status == 0)
 		continue;
-
-	    STRLOG(0x6879, 0, 6, SL_TRACE, "hya[%d] INT; ISR = %x\n",
-		   board_index, status);
 
 	    if (status & (NE_ISR_PRX | NE_ISR_RXE | NE_ISR_OVW))
 	    {
@@ -1294,56 +979,6 @@ int board_index;
 }
 
 static void
-dump_ethernet_prom(base)
-long base;
-{
-    int i;
-    unsigned char buf[32];
-    volatile unsigned char *nic;
-
-    nic = (volatile unsigned char *)(base + NE8390_NIC_OFFSET);
-
-    /* Dump NIC registers to verify NIC is at correct address */
-    cmn_err(CE_NOTE, "hydra: NIC regs: CR=%x ISR=%x DCR=%x IMR=%x",
-	    hydra_inb(nic, NE_CR),
-	    hydra_inb(nic, NE_ISR),
-	    hydra_inb(nic, NE_DCR),
-	    hydra_inb(nic, NE_IMR));
-
-    /* Stop NIC, clear interrupts */
-    hydra_outb(nic, NE_CR, NE_CR_STP | NE_CR_NODMA);
-    hydra_outb(nic, NE_IMR, 0);
-    hydra_outb(nic, NE_ISR, 0xFF);
-
-    cmn_err(CE_NOTE, "hydra: NIC regs after stop: CR=%x ISR=%x",
-	    hydra_inb(nic, NE_CR),
-	    hydra_inb(nic, NE_ISR));
-
-    /* ---- Method A: PROM at $FFC0 step-2 ---- */
-    for (i = 0; i < 32; i++)
-	buf[i] = *(volatile unsigned char *)(base + 0xFFC0 + i * 2);
-
-    cmn_err(CE_NOTE, "hydra: PROM $FFC0 step-2:");
-    for (i = 0; i < 4; i++)
-	cmn_err(CE_NOTE, "hydra:  %x: %x %x %x %x %x %x %x %x",
-		i * 8,
-		buf[i*8], buf[i*8+1], buf[i*8+2], buf[i*8+3],
-		buf[i*8+4], buf[i*8+5], buf[i*8+6], buf[i*8+7]);
-
-    /* ---- Method B: PROM at $7FC0 step-2 ---- */
-    for (i = 0; i < 32; i++)
-	buf[i] = *(volatile unsigned char *)(base + 0x7FC0 + i * 2);
-
-    cmn_err(CE_NOTE, "hydra: PROM $7FC0 step-2:");
-    for (i = 0; i < 4; i++)
-	cmn_err(CE_NOTE, "hydra:  %x: %x %x %x %x %x %x %x %x",
-		i * 8,
-		buf[i*8], buf[i*8+1], buf[i*8+2], buf[i*8+3],
-		buf[i*8+4], buf[i*8+5], buf[i*8+6], buf[i*8+7]);
-
-}
-
-static void
 get_ethernet_address(base, physical_ethernet_address)
 long base;
 unsigned char physical_ethernet_address[6];
@@ -1475,9 +1110,6 @@ hydraautoconfig()
 	if (n1 > 0)
 	{
 	    cmn_err(CE_NOTE, "hydra: found %d board(s) via autocon", n1);
-	    /* Validate by reading PROM */
-	    for (i = 0; i < n1; i++)
-		dump_ethernet_prom(hydra_autoconfig[i].address);
 	    return;
 	}
     }
@@ -1521,9 +1153,6 @@ hydraautoconfig()
     }
     if (n > 0)
     {
-	cmn_err(CE_NOTE, "hydra: found %d board(s) via I/O slot probe", n);
-	for (i = 0; i < n; i++)
-	    dump_ethernet_prom(hydra_autoconfig[i].address);
 	return;
     }
 
@@ -1565,9 +1194,6 @@ hydraautoconfig()
     }
     if (n > 0)
     {
-	cmn_err(CE_NOTE, "hydra: found %d board(s) via memory space probe", n);
-	for (i = 0; i < n; i++)
-	    dump_ethernet_prom(hydra_autoconfig[i].address);
 	return;
     }
 
@@ -1603,8 +1229,6 @@ int board_index;
     bcopy((caddr_t)paddress, (caddr_t)board->hydra_info.paddress,
 	  sizeof(board->hydra_info.paddress));
 
-    dump_ethernet_prom((long)board->hydra_info.board_base);
-
     return setup_ne2000(board_index, paddress);
 }
 
@@ -1617,13 +1241,6 @@ unsigned char ethernet_address[6];
     hydra_board_t *board = &hydra_board[board_index];
     hydra_info_t *info = &board->hydra_info;
     volatile unsigned char *nic = info->nic_base;
-
-    STRLOG(0x6879, 0, 14, SL_TRACE,
-	   "hya[%d] Address: %x:%x:%x:%x:%x:%x\n",
-	   board_index,
-	   ethernet_address[0], ethernet_address[1],
-	   ethernet_address[2], ethernet_address[3],
-	   ethernet_address[4], ethernet_address[5]);
 
     bcopy((caddr_t)ethernet_address, (caddr_t)info->paddress,
 	  sizeof(info->paddress));
