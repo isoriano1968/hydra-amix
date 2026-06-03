@@ -87,7 +87,7 @@ To rebuild the full kernel with the hydra driver:
 
 ```sh
 cd /usr/sys
-make 'CFLAGS=-O -D_KERNEL -DSVR40 -DSVR4'
+make force
 ```
 
 The `makedev` tool is used to install the device node:
