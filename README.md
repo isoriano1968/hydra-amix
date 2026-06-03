@@ -78,7 +78,7 @@ The driver is compiled natively on the Amiga under AMIX. No cross-compiler is re
 ```sh
 su
 cd /usr/sys/amiga/driver/hydra
-make 'CFLAGS=-O -D_KERNEL -DSVR40 -DSVR4' exp
+make
 ```
 
 This produces a relocatable object file `exp` that can be linked into a custom kernel.
