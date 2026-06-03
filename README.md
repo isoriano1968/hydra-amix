@@ -45,7 +45,8 @@ The driver follows the same DLPI/STREAMS architecture as the A2065 driver, makin
 │       ├── ml/                   ← machine layer (3B2 derived)
 │       ├── os/                   ← OS core
 │       └── Makefile              ← top-level kernel build
-├── zorro_probe.c                 ← User-space Zorro II detection tool
+├── zorro_probe.c                 ← User-space Zorro II autoconfig detection
+├── hydra_probe.c                 ← User-space Hydra MAC PROM reader
 └── README.md
 ```
 
@@ -54,10 +55,10 @@ The driver follows the same DLPI/STREAMS architecture as the A2065 driver, makin
 The driver is a STREAMS DLPI provider (`struct streamtab hydrainfo`) registered at cdevsw slot 47, using major/minor device `hya`. It follows the same pattern as the A2065 (`aen`) driver:
 
 - **`hydraopen()`** — STREAMS open; calls `hydraautoconfig()` to detect the card, then `hydra_initialize()` to set it up
-- **`hydraautoconfig()`** — three-method card detection:
-  1. `autocon(NE8390_BOARD_ID, ...)` — uses kernel's bootinfo table (works at runtime)
-  2. Direct Zorro II slot probe — reads MAC PROM at each slot's base+0xffc0 (independent of bootinfo)
-  3. A2065 fallback — for testing in FS-UAE which only emulates the Commodore A2065
+- **`hydraautoconfig()`** — three-method card detection (runs once, cached):
+  1. `autocon(NE8390_BOARD_ID, ...)` — uses kernel's bootinfo autoconfig table with Zorro II address validation
+  2. Direct Zorro II I/O slot probe — reads MAC PROM at each 64 KB slot (0xE90000-0xEFFFFF)
+  3. Memory space probe — scans Zorro II memory space (0x200000-0x9FFFFF) at 64 KB steps
 - **`hydrawput()`** — STREAMS write-side put procedure, handles DLPI primitives (DL_INFO_REQ, DL_BIND_REQ, DL_UNITDATA_REQ, etc.)
 - **`hydraintr()`** — INT2 interrupt handler, registered in `int2_tbl[]`, processes RX/TX/error interrupts from the DP8390
 - **`setup_ne2000()`** — initializes the DP8390 registers, ring buffers, and physical address
@@ -66,53 +67,52 @@ The driver is a STREAMS DLPI provider (`struct streamtab hydrainfo`) registered 
 
 ### Prerequisites
 
-- **m68k-amix cross-compiler** (GCC 2.7.2.3 targeting AMIX SVR4)
-- Build host: Linux (cross-compilation) or native AMIX
+- **AMIX 2.1p2** installed on an Amiga (A3000/A4000) with development system
+- **Native GCC 2.7.2.3** for AMIX (included with the AMIX Development System)
+- The toolchain can be downloaded from [amigaunix.com](https://amigaunix.com)
 
-### Kernel build (cross-compile)
+### Kernel build
 
-```sh
-cd usr/sys
-make CC=m68k-amix-gcc CFLAGS="-O -D_KERNEL -DSVR40 -DSVR4"
-```
-
-This produces `unix` (ELF) and (via `elf2coff`) a COFF kernel image ready for boot.
-
-### Boot image
+The driver is compiled natively on the Amiga under AMIX. No cross-compiler is required.
 
 ```sh
-cd stand
-make oldboot KERNEL=/path/to/unix
+su
+cd /usr/sys/amiga/driver/hydra
+make 'CFLAGS=-O -D_KERNEL -DSVR40 -DSVR4' exp
 ```
 
-This generates a bootable floppy/hard-disk image with the compressed kernel, bootstrap, and info blocks. See `stand/README` for details.
+This produces a relocatable object file `exp` that can be linked into a custom kernel.
 
-### Zorro probe utility
+To rebuild the full kernel with the hydra driver:
 
 ```sh
-gcc -O -o zorro_probe zorro_probe.c
-./zorro_probe   # (run as root)
+cd /usr/sys
+make 'CFLAGS=-O -D_KERNEL -DSVR40 -DSVR4'
 ```
 
-Scans Zorro II slots via `/dev/mem` and probes the hydra and aen STREAMS drivers.
+The `makedev` tool is used to install the device node:
+
+```sh
+mknod /dev/hya0 c 47 0
+```
 
 ## Testing
 
-The kernel boots and the driver initializes when `ifconfig hya0 plumb` is run:
+The driver initializes on `open()` (e.g., `cat /dev/hya0`), then the interface is configured via `ifconfig`:
 
 ```sh
 su
 ifconfig hya0 plumb
-ifconfig hya0
+ifconfig hya0 192.168.1.100 netmask 255.255.255.0 up
 ping 192.168.1.1   # (once network is configured)
 ```
 
-On systems without a Hydra card (e.g., FS-UAE emulating an A2065), the driver falls back to a testing mode using a fake MAC address, allowing the STREAMS/DLPI plumbing to be validated without the target hardware.
-
 ## Known Issues
 
-- **Bootinfo timing**: The kernel's `autocon()` function reads from the `bootinfo` table, which is populated by `config()` in `support.c`. During very early boot (`init_tbl` processing), the table may not yet be valid. The driver therefore configures itself lazily at `ifconfig` time (like the A2065 driver), avoiding `init_tbl` entirely.
-- **A2065 fallback**: When no Hydra is detected but an A2065 is present (FS-UAE), the driver creates a software-emulated board — DLPI operations work, but actual packet I/O is not possible since the NE2000 register set differs from LANCE.
+- **autocon() table corruption**: The kernel's `autocon()` function reads from the `bootinfo` ConfigDev table populated by `config()` in `support.c`. On AMIX 2.1p2 the table entries can be corrupted (address/size mismatches), so the driver validates addresses and falls back to direct slot/memory probes.
+- **`cmn_err` format limitations**: AMIX's `cmn_err` does not support `%02x`, `%08lx`, or any `%l` prefix — only `%x`, `%d`, `%c`, `%s` work.
+- **PROM byte lane**: The MAC PROM at board+0xFFC0 uses 16-bit bus with step-2 byte access (every other byte). Direct reads without step-2 return garbage.
+- **`ifconfig plumb`**: Requires the `ifstats` entry to be registered and active in the kernel's interface list.
 
 ## License
 
