@@ -98,13 +98,27 @@ mknod /dev/hya0 c 47 0
 
 ## Testing
 
-The driver initializes on `open()` (e.g., `cat /dev/hya0`), then the interface is configured via `ifconfig`:
+### Manual interface setup
+
+AMIX does not support `ifconfig plumb` (SVR4.0 predates that mechanism). The interface is plumbed via `slink`:
 
 ```sh
 su
-ifconfig hya0 plumb
-ifconfig hya0 192.168.1.100 netmask 255.255.255.0 up
-ping 192.168.1.1   # (once network is configured)
+/usr/sbin/slink addaen /dev/hya0 hya0
+/usr/sbin/ifconfig hya0 192.168.1.100 netmask 255.255.255.0 up -trailers
+/usr/sbin/route add default 192.168.1.1 1
+ping 192.168.1.1
+```
+
+The `route add default ... 1` suffix is the metric (required on AMIX).
+
+### Boot-time configuration
+
+Add to `/etc/inet/network-config` (sourced by `/etc/rc2.d/S69inet`):
+
+```sh
+/usr/sbin/slink addaen /dev/hya0 hya0 2>/dev/null
+/usr/sbin/ifconfig hya0 192.168.1.100 netmask 255.255.255.0 up -trailers
 ```
 
 ## Known Issues
@@ -112,7 +126,8 @@ ping 192.168.1.1   # (once network is configured)
 - **autocon() table corruption**: The kernel's `autocon()` function reads from the `bootinfo` ConfigDev table populated by `config()` in `support.c`. On AMIX 2.1p2 the table entries can be corrupted (address/size mismatches), so the driver validates addresses and falls back to direct slot/memory probes.
 - **`cmn_err` format limitations**: AMIX's `cmn_err` does not support `%02x`, `%08lx`, or any `%l` prefix — only `%x`, `%d`, `%c`, `%s` work.
 - **PROM byte lane**: The MAC PROM at board+0xFFC0 uses 16-bit bus with step-2 byte access (every other byte). Direct reads without step-2 return garbage.
-- **`ifconfig plumb`**: Requires the `ifstats` entry to be registered and active in the kernel's interface list.
+- **`ifconfig plumb` does not exist on AMIX**: Use `slink addaen /dev/hya0 hya0` instead. The interface name matches the device minor (`hya0` for minor 0).
+- **Remote DMA hang**: The standard NE2000 byte-at-data-port RDMA method does not raise RDC on the Hydra card. The AmigaOS reference driver uses Hydra-specific ASIC registers (`HYDRA_LOAD1`/`HYDRA_LOAD2` at board+0x8000+0x7FD2/0x7FD5) and writes packet data directly to the card's buffer RAM at the board base address.
 
 ## License
 
