@@ -124,7 +124,6 @@ Add to `/etc/inet/network-config` (sourced by `/etc/rc2.d/S69inet`):
 ## Known Issues
 
 - **autocon() table corruption**: The kernel's `autocon()` function reads from the `bootinfo` ConfigDev table populated by `config()` in `support.c`. On AMIX 2.1p2 the table entries can be corrupted (address/size mismatches), so the driver validates addresses and falls back to direct slot/memory probes.
-- **`cmn_err` format limitations**: AMIX's `cmn_err` does not support `%02x`, `%08lx`, or any `%l` prefix — only `%x`, `%d`, `%c`, `%s` work.
 - **PROM byte lane**: The MAC PROM at board+0xFFC0 uses 16-bit bus with step-2 byte access (every other byte). Direct reads without step-2 return garbage.
 - **`ifconfig plumb` does not exist on AMIX**: Use `slink addaen /dev/hya0 hya0` instead. The interface name matches the device minor (`hya0` for minor 0).
 - **Remote DMA hang**: The standard NE2000 byte-at-data-port RDMA method does not raise RDC on the Hydra card. The AmigaOS reference driver uses Hydra-specific ASIC registers (`HYDRA_LOAD1`/`HYDRA_LOAD2` at board+0x8000+0x7FD2/0x7FD5) and writes packet data directly to the card's buffer RAM at the board base address.
