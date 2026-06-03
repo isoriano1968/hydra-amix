@@ -125,3 +125,4 @@ AMIX is proprietary software of Commodore-Amiga / Haage & Partner. This driver i
 - *NE2000 Programmer's Guide* (Novell/National)
 - *Amiga Hardware Reference Manual* (Commodore)
 - *System V Release 4 STREAMS Programmer's Guide* (AT&T)
+- [Hydra AmigaNet reverse-engineering (Ville Jouppi)](https://github.com/vjouppi/hydra) — AmigaOS driver, register offsets, board-level schematics
