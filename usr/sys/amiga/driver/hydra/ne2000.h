@@ -71,6 +71,7 @@
 #define NE_CR_TXP        0x04
 #define NE_CR_RDMA_READ  0x08
 #define NE_CR_RDMA_WRITE 0x10
+#define NE_CR_NODMA      0x20
 
 /*
 ** Interrupt Mask Register (IMR, page 0, write at offset 0x0f)
@@ -129,7 +130,7 @@
 ** Hydra board-specific constants
 */
 #define NE8390_NIC_OFFSET     0xffe1
-#define NE8390_ADDRPROM_OFFSET 0xffc1
+#define NE8390_ADDRPROM_OFFSET 0xffc0	/* from BoardAddr + $8000 + $7FC0 = $FFC0 */
 
 #define NE8390_START_PG  0x00
 #define NE8390_STOP_PG   0x40
