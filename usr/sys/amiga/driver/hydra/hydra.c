@@ -1341,17 +1341,6 @@ long base;
 		buf[i*8], buf[i*8+1], buf[i*8+2], buf[i*8+3],
 		buf[i*8+4], buf[i*8+5], buf[i*8+6], buf[i*8+7]);
 
-    /* ---- Method C: NIC page 1 PAR registers (MAC from DP8390 internal EEPROM) ---- */
-    {
-	unsigned char par[6];
-	hydra_outb(nic, NE_CR, NE_CR_NODMA);
-	hydra_outb(nic, NE_CR, NE_CR_P1 | NE_CR_NODMA);
-	for (i = 0; i < 6; i++)
-	    par[i] = hydra_inb(nic, NE_PAR0 + i);
-	hydra_outb(nic, NE_CR, NE_CR_NODMA);
-	cmn_err(CE_NOTE, "hydra: NIC page1 PAR = %x:%x:%x:%x:%x:%x",
-		par[0], par[1], par[2], par[3], par[4], par[5]);
-    }
 }
 
 static void
@@ -1392,7 +1381,6 @@ unsigned char physical_ethernet_address[6];
     if (!valid)
     {
 	/* Method 2: fallback — read MAC from DP8390 PAR registers (page 1) */
-	hydra_outb(nic, NE_CR, NE_CR_NODMA);
 	hydra_outb(nic, NE_CR, NE_CR_P1 | NE_CR_NODMA);
 	for (j = 0; j < 6; j++)
 	    physical_ethernet_address[j] = hydra_inb(nic, NE_PAR0 + j);
@@ -1650,7 +1638,7 @@ unsigned char ethernet_address[6];
     hydra_outb(nic, NE_CR, NE_CR_P0 | NE_CR_STP);
     DELAY(10);
 
-    hydra_outb(nic, NE_DCR, NE_DCR_WTS | NE_DCR_BOS | NE_DCR_LS | NE_DCR_FT0);
+    hydra_outb(nic, NE_DCR, NE_DCR_BOS | NE_DCR_FT1);
 
     hydra_outb(nic, NE_RBCNT0, 0);
     hydra_outb(nic, NE_RBCNT1, 0);
