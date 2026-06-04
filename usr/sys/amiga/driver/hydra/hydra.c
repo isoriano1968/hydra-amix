@@ -161,8 +161,6 @@ cred_t *credp;
 	    cmn_err(CE_NOTE, "hya%d: init failed", board_index);
 	    return ENODEV;
 	}
-	cmn_err(CE_NOTE, "hya%d: init OK at 0x%x", board_index,
-		(unsigned long)board->hydra_info.board_base);
     }
 
     if (board->hydra_info.board_base == 0)
@@ -170,10 +168,6 @@ cred_t *credp;
 	cmn_err(CE_NOTE, "hya%d: no board base", board_index);
 	return ENXIO;
     }
-
-    cmn_err(CE_NOTE, "hya%d: open (board_state=%d base=0x%x)",
-	    board_index, board->hydra_status.board_state,
-	    (unsigned long)board->hydra_info.board_base);
 
     if (sap_index == 0)
     {
@@ -406,10 +400,6 @@ mblk_t *mp;
     {
     case SIOCSIFFLAGS:
     case SIOCGIFFLAGS:
-	cmn_err(CE_NOTE, "hya%d: SIOC%s (if_flags=%x)",
-		hp->board_index,
-		iocbp->ioc_cmd == SIOCSIFFLAGS ? "SIFFLAGS" : "GIFFLAGS",
-		board->if_flags);
 	mp->b_datap->db_type = M_IOCACK;
 	putnext(RD(q), mp);
 	return;
@@ -454,9 +444,6 @@ mblk_t *mp;
 	{
 	    dl_ok_ack_t *okp;
 
-	    cmn_err(CE_NOTE, "hya%d: DL_ATTACH_REQ (state=%d)",
-		    hp->board_index, hp->state);
-
 	    freemsg(mp);
 
 	    if (!(mp = allocb(sizeof(dl_ok_ack_t), BPRI_MED)))
@@ -478,9 +465,6 @@ mblk_t *mp;
 	{
 	    dl_bind_req_t *reqp = (dl_bind_req_t *)mp->b_rptr;
 	    dl_bind_ack_t *ackp;
-
-	    cmn_err(CE_NOTE, "hya%d: DL_BIND_REQ sap=0x%x (state=%d)",
-		    hp->board_index, reqp->dl_sap, hp->state);
 
 	    hp->sap = reqp->dl_sap;
 	    hp->state = DL_IDLE;
@@ -513,9 +497,6 @@ mblk_t *mp;
     case DL_INFO_REQ:
 	{
 	    dl_info_ack_t *ackp;
-
-	    cmn_err(CE_NOTE, "hya%d: DL_INFO_REQ (state=%d sap=0x%x style=%d)",
-		    hp->board_index, hp->state, hp->sap, DL_STYLE1);
 
 	    freemsg(mp);
 
@@ -1082,7 +1063,6 @@ hydraautoconfig()
 
     hydraautoconfigured = 1;
     hydra_number_of_boards = 0;
-    cmn_err(CE_NOTE, "hydra: probing for Hydra Systems AmigaNet");
 
     /* ---- Run all probe methods, use first that finds a valid MAC ---- */
 
@@ -1094,7 +1074,6 @@ hydraautoconfig()
 	    addr = 0; size = 0;
 	    if (!autocon(NE8390_BOARD_ID, i, &addr, &size))
 		break;
-	    cmn_err(CE_NOTE, "hydra: autocon addr=0x%x size=%d", addr, size);
 
 	    /* Accept only 64KB-aligned Zorro II addresses */
 	    if ((addr & 0xFFFF) == 0 &&
@@ -1109,14 +1088,12 @@ hydraautoconfig()
 	}
 	if (n1 > 0)
 	{
-	    cmn_err(CE_NOTE, "hydra: found %d board(s) via autocon", n1);
 	    return;
 	}
     }
 
     /* Method 2: Direct PROM probe at Zorro II I/O slots (0xE90000-0xEFFFFF) */
     n = 0;
-    cmn_err(CE_NOTE, "hydra: probing I/O slots 0xE90000-0xEFFFFF");
     for (slot = 0; slot < 7; slot++)
     {
 	unsigned long base = 0x00E90000UL + slot * 0x10000UL;
@@ -1140,9 +1117,6 @@ hydraautoconfig()
 	if (!valid)
 	    continue;
 
-	cmn_err(CE_NOTE, "hydra: slot %d MAC %x:%x:%x:%x:%x:%x at 0x%x",
-		slot, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], base);
-
 	if (hydra_number_of_boards < HYDRA_MAXBOARDS)
 	{
 	    hydra_autoconfig[hydra_number_of_boards].address = base;
@@ -1158,7 +1132,6 @@ hydraautoconfig()
 
     /* Method 3: Direct PROM probe at Zorro II memory space (0x200000-0x9FFFFF) */
     n = 0;
-    cmn_err(CE_NOTE, "hydra: probing memory space 0x200000-0x9FFFFF");
     for (addr = 0x00200000; addr < 0x00A00000; addr += 0x00010000)
     {
 	unsigned char mac[6];
@@ -1180,9 +1153,6 @@ hydraautoconfig()
 
 	if (!valid)
 	    continue;
-
-	cmn_err(CE_NOTE, "hydra: memory addr 0x%x MAC %x:%x:%x:%x:%x:%x",
-		addr, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 
 	if (hydra_number_of_boards < HYDRA_MAXBOARDS)
 	{
