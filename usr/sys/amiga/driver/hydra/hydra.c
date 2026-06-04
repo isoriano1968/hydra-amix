@@ -404,6 +404,94 @@ mblk_t *mp;
 	putnext(RD(q), mp);
 	return;
 
+    case HYDRA_NUMBER_OF_BOARDS:
+    {
+	caddr_t arg = *(caddr_t *)mp->b_cont->b_rptr;
+
+	freemsg(mp->b_cont);
+
+	mp->b_cont = allocb(sizeof(int), BPRI_MED);
+	if (!mp->b_cont)
+	{
+	    mp->b_datap->db_type = M_IOCNAK;
+	    freemsg(unlinkb(mp));
+	    iocbp->ioc_count = 0;
+	    iocbp->ioc_rval = 0;
+	    iocbp->ioc_error = ENOMEM;
+	    putnext(RD(q), mp);
+	    return;
+	}
+
+	*(int *)mp->b_cont->b_rptr = hydra_number_of_boards;
+	mp->b_cont->b_wptr += sizeof(int);
+
+	if (iocbp->ioc_count == TRANSPARENT)
+	{
+	    struct copyreq *creq = (struct copyreq *)mp->b_rptr;
+	    mp->b_datap->db_type = M_COPYOUT;
+	    creq->cq_addr = arg;
+	    mp->b_wptr = mp->b_rptr + sizeof *creq;
+	    creq->cq_size = sizeof(int);
+	    creq->cq_flag = 0;
+	    creq->cq_private = (mblk_t *)0;
+	}
+	else
+	{
+	    iocbp->ioc_count = sizeof(int);
+	    mp->b_datap->db_type = M_IOCACK;
+	}
+	putnext(RD(q), mp);
+	return;
+    }
+
+    case HYDRA_GET_CONFIG:
+    {
+	hydra_config_t cfg;
+	caddr_t arg = *(caddr_t *)mp->b_cont->b_rptr;
+
+	cfg.board_base = (long)board->hydra_info.board_base;
+	cfg.board_debug = board->hydra_status.board_debug;
+	bcopy((caddr_t)board->hydra_info.paddress, (caddr_t)cfg.paddress, 6);
+	cfg.laddress[0] = 0;
+	cfg.mode = 0;
+	cfg.flags = 0;
+
+	freemsg(mp->b_cont);
+
+	mp->b_cont = allocb(sizeof(hydra_config_t), BPRI_MED);
+	if (!mp->b_cont)
+	{
+	    mp->b_datap->db_type = M_IOCNAK;
+	    freemsg(unlinkb(mp));
+	    iocbp->ioc_count = 0;
+	    iocbp->ioc_rval = 0;
+	    iocbp->ioc_error = ENOMEM;
+	    putnext(RD(q), mp);
+	    return;
+	}
+
+	*(hydra_config_t *)mp->b_cont->b_rptr = cfg;
+	mp->b_cont->b_wptr += sizeof(hydra_config_t);
+
+	if (iocbp->ioc_count == TRANSPARENT)
+	{
+	    struct copyreq *creq = (struct copyreq *)mp->b_rptr;
+	    mp->b_datap->db_type = M_COPYOUT;
+	    creq->cq_addr = arg;
+	    mp->b_wptr = mp->b_rptr + sizeof *creq;
+	    creq->cq_size = sizeof(hydra_config_t);
+	    creq->cq_flag = 0;
+	    creq->cq_private = (mblk_t *)0;
+	}
+	else
+	{
+	    iocbp->ioc_count = sizeof(hydra_config_t);
+	    mp->b_datap->db_type = M_IOCACK;
+	}
+	putnext(RD(q), mp);
+	return;
+    }
+
     case IF_UNITSEL:
     default:
 	mp->b_datap->db_type = M_IOCNAK;
