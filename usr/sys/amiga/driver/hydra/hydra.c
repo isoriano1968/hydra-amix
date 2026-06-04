@@ -105,29 +105,29 @@ unsigned char val;
 }
 
 static void
-hydra_rdma_read(nic_base, buf, len)
-volatile unsigned char *nic_base;
+hydra_ram_write(board, buf, len, page)
+hydra_board_t *board;
 unsigned char *buf;
-int len;
+int len, page;
 {
-    volatile unsigned char *rdma = nic_base;
+    volatile unsigned char *dst = board->hydra_info.board_base + (page << 8);
     int i;
 
     for (i = 0; i < len; i++)
-	*buf++ = *rdma;
+	dst[i] = buf[i];
 }
 
 static void
-hydra_rdma_write(nic_base, buf, len)
-volatile unsigned char *nic_base;
+hydra_ram_read(board, buf, len, page)
+hydra_board_t *board;
 unsigned char *buf;
-int len;
+int len, page;
 {
-    volatile unsigned char *rdma = nic_base;
+    volatile unsigned char *src = board->hydra_info.board_base + (page << 8);
     int i;
 
     for (i = 0; i < len; i++)
-	*rdma = *buf++;
+	buf[i] = src[i];
 }
 
 static int
@@ -343,23 +343,13 @@ mblk_t *mp;
     if (pktsize < ETH_MINPACKET)
 	pktsize = ETH_MINPACKET;
 
-    hydra_outb(nic, NE_CR, NE_CR_P0   | NE_CR_STA);
-    hydra_outb(nic, NE_RSAR0, 0);
-    hydra_outb(nic, NE_RSAR1, info->tx_start_page);
-    hydra_outb(nic, NE_RBCNT0, pktsize & 0xff);
-    hydra_outb(nic, NE_RBCNT1, (pktsize >> 8) & 0xff);
-    hydra_outb(nic, NE_CR, NE_CR_P0 | NE_CR_RDMA_WRITE | NE_CR_STA);
+    hydra_ram_write(board, tmp, pktsize, info->tx_start_page);
 
-    hydra_rdma_write(nic, tmp, pktsize);
-
-    while (!(hydra_inb(nic, NE_ISR) & NE_ISR_RDC))
-	;
-    hydra_outb(nic, NE_ISR, NE_ISR_RDC);
-
+    hydra_outb(nic, NE_CR, NE_CR_P0 | NE_CR_STA);
     hydra_outb(nic, NE_TPSR, info->tx_start_page);
     hydra_outb(nic, NE_TBCNT0, pktsize & 0xff);
     hydra_outb(nic, NE_TBCNT1, (pktsize >> 8) & 0xff);
-    hydra_outb(nic, NE_CR, NE_CR_P0   | NE_CR_TXP | NE_CR_STA);
+    hydra_outb(nic, NE_CR, NE_CR_P0 | NE_CR_TXP | NE_CR_STA);
 
     board->hydra_status.packets_sent++;
     board->ifstats.ifs_opackets++;
@@ -781,18 +771,9 @@ int board_index;
 	if (next_frame == curr)
 	    break;
 
-	hydra_outb(nic, NE_RSAR0, 0);
-	hydra_outb(nic, NE_RSAR1, next_frame);
-	hydra_outb(nic, NE_RBCNT0, 4);
-	hydra_outb(nic, NE_RBCNT1, 0);
-	hydra_outb(nic, NE_CR, NE_CR_P0 | NE_CR_RDMA_READ | NE_CR_STA);
-
 	{
 	    unsigned char header[4];
-	    hydra_rdma_read(nic, header, 4);
-	    while (!(hydra_inb(nic, NE_ISR) & NE_ISR_RDC))
-		;
-	    hydra_outb(nic, NE_ISR, NE_ISR_RDC);
+	    hydra_ram_read(board, header, 4, next_frame);
 
 	    rsr = header[0];
 	    next_frame = header[1];
@@ -829,44 +810,30 @@ int board_index;
 	}
 
 	{
-	    int offset = info->next_pkt * 256;
+	    int offset = info->next_pkt * 256 + 4;
 	    int stop = NE8390_STOP_PG * 256;
 
 	    if (offset + pktsize > stop)
 	    {
 		int semi = stop - offset;
+		volatile unsigned char *src;
+		int i;
 
-		hydra_outb(nic, NE_RSAR0, 0);
-		hydra_outb(nic, NE_RSAR1, info->next_pkt);
-		hydra_outb(nic, NE_RBCNT0, semi & 0xff);
-		hydra_outb(nic, NE_RBCNT1, (semi >> 8) & 0xff);
-		hydra_outb(nic, NE_CR, NE_CR_P0 | NE_CR_RDMA_READ | NE_CR_STA);
-		hydra_rdma_read(nic, rxbuff, semi);
-		while (!(hydra_inb(nic, NE_ISR) & NE_ISR_RDC))
-		    ;
-		hydra_outb(nic, NE_ISR, NE_ISR_RDC);
+		src = board->hydra_info.board_base + offset;
+		for (i = 0; i < semi; i++)
+		    rxbuff[i] = src[i];
 
-		hydra_outb(nic, NE_RSAR0, 0);
-		hydra_outb(nic, NE_RSAR1, info->rx_start_page);
-		hydra_outb(nic, NE_RBCNT0, (pktsize - semi) & 0xff);
-		hydra_outb(nic, NE_RBCNT1, ((pktsize - semi) >> 8) & 0xff);
-		hydra_outb(nic, NE_CR, NE_CR_P0 | NE_CR_RDMA_READ | NE_CR_STA);
-		hydra_rdma_read(nic, rxbuff + semi, pktsize - semi);
-		while (!(hydra_inb(nic, NE_ISR) & NE_ISR_RDC))
-		    ;
-		hydra_outb(nic, NE_ISR, NE_ISR_RDC);
+		src = board->hydra_info.board_base + (info->rx_start_page << 8);
+		for (i = 0; i < pktsize - semi; i++)
+		    rxbuff[semi + i] = src[i];
 	    }
 	    else
 	    {
-		hydra_outb(nic, NE_RSAR0, 0);
-		hydra_outb(nic, NE_RSAR1, info->next_pkt);
-		hydra_outb(nic, NE_RBCNT0, pktsize & 0xff);
-		hydra_outb(nic, NE_RBCNT1, (pktsize >> 8) & 0xff);
-		hydra_outb(nic, NE_CR, NE_CR_P0 | NE_CR_RDMA_READ | NE_CR_STA);
-		hydra_rdma_read(nic, rxbuff, pktsize);
-		while (!(hydra_inb(nic, NE_ISR) & NE_ISR_RDC))
-		    ;
-		hydra_outb(nic, NE_ISR, NE_ISR_RDC);
+		volatile unsigned char *src = board->hydra_info.board_base + offset;
+		int i;
+
+		for (i = 0; i < pktsize; i++)
+		    rxbuff[i] = src[i];
 	    }
 	}
 
