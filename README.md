@@ -31,6 +31,7 @@ The driver follows the same DLPI/STREAMS architecture as the A2065 driver, makin
 │       ├── amiga/
 │       │   ├── driver/
 │       │   │   ├── hydra/        ← This driver (ne2000.h, hydra.c, hydra.h, ...)
+│       │   │   │   └── hya/      ← hya user-space control tool
 │       │   │   ├── aen/          ← A2065 LANCE driver (reference implementation)
 │       │   │   └── ...
 │       │   ├── kernel/
@@ -45,8 +46,6 @@ The driver follows the same DLPI/STREAMS architecture as the A2065 driver, makin
 │       ├── ml/                   ← machine layer (3B2 derived)
 │       ├── os/                   ← OS core
 │       └── Makefile              ← top-level kernel build
-├── zorro_probe.c                 ← User-space Zorro II autoconfig detection
-├── hydra_probe.c                 ← User-space Hydra MAC PROM reader
 └── README.md
 ```
 
@@ -116,8 +115,41 @@ The `route add default ... 1` suffix is the metric (required on AMIX).
 Add to `/etc/inet/network-config` (sourced by `/etc/rc2.d/S69inet`):
 
 ```sh
+/usr/amiga/bin/hya -S || exit 0
 /usr/sbin/slink addaen /dev/hya0 hya0 2>/dev/null
 /usr/sbin/ifconfig hya0 192.168.1.100 netmask 255.255.255.0 up -trailers
+```
+
+The `hya -S` line silently exits the script if no Hydra board is detected, preventing the boot script from hanging on `slink`.
+
+## hya Control Utility
+
+The `hya` tool (in `usr/sys/amiga/driver/hydra/hya/`) is a user-space utility for checking Hydra board presence and reading configuration. It is modeled after the `aen` tool for the A2065 card.
+
+### Building
+
+```sh
+cd /usr/sys/amiga/driver/hydra/hya
+make
+make install          # installs to /usr/amiga/bin/hya
+```
+
+### Usage
+
+| Flag | Description |
+|------|-------------|
+| `-S` | Silent check — exit 0 if board found, 1 if not (for boot scripts) |
+| `-n` | Print number of Hydra boards detected |
+| `-c` | Show MAC address, board base, and debug level |
+| `-d dev` | Use alternate device (default `/dev/hya0`) |
+
+### Boot script integration
+
+The `hya -S` command is used to conditionally plumb the interface:
+
+```sh
+/usr/amiga/bin/hya -S && /usr/sbin/slink addaen /dev/hya0 hya0 && \
+    /usr/sbin/ifconfig hya0 192.168.1.100 netmask 255.255.255.0 up -trailers
 ```
 
 ## Known Issues
