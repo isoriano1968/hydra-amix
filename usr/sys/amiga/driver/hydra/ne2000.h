@@ -23,16 +23,24 @@
 #define NE_CNTR0         0x0d
 #define NE_CNTR1         0x0e
 #define NE_CNTR2         0x0f
+#define NE_IMR          0x0f
 
 /*
-** Page 0 registers
+** Page 0 registers (write-only)
 */
 #define NE_PSTART        0x01
 #define NE_PSTOP         0x02
 #define NE_TPSR          0x04
+#define NE_TBCNT0_W      0x05
+#define NE_TBCNT1_W      0x06
 #define NE_RSAR0         0x08
 #define NE_RSAR1         0x09
+#define NE_RBCR0_W       0x0a
+#define NE_RBCR1_W       0x0b
+#define NE_RCR           0x0c
+#define NE_TCR           0x0d
 #define NE_DCR           0x0e
+#define NE_IMR           0x0f
 
 /*
 ** Page 1 registers
@@ -54,13 +62,37 @@
 #define NE_MAR7          0x0f
 
 /*
-** Command Register (CR) bits — DP8390 datasheet bit assignments:
-**   bit 0: STP  (Stop)
-**   bit 1: STA  (Start)
-**   bit 2: TXP  (Transmit)
-**   bits 3-5: RD0-RD2 (Remote DMA control):
-**     000 = abort, 001 = remote read, 010 = remote write
-**   bits 6-7: PS0-PS1 (Page select)
+** Transmit Configuration Register (TCR) bits
+*/
+#define NE_TCR_NORMAL    0x00
+#define NE_TCR_LB0       0x02
+#define NE_TCR_LB1       0x04
+#define NE_TCR_ATD       0x08
+#define NE_TCR_OFST      0x10
+
+/*
+** Receive Configuration Register (RCR) bits
+*/
+#define NE_RCR_SEP       0x01
+#define NE_RCR_AR        0x02
+#define NE_RCR_AB        0x04
+#define NE_RCR_AM        0x08
+#define NE_RCR_PRO       0x10
+#define NE_RCR_MON       0x20
+
+/*
+** Interrupt Mask Register (IMR) bits
+*/
+#define NE_IMR_PRXE      0x01
+#define NE_IMR_PTXE      0x02
+#define NE_IMR_RXEE      0x04
+#define NE_IMR_TXEE      0x08
+#define NE_IMR_OVWE      0x10
+#define NE_IMR_CNTE      0x20
+#define NE_IMR_RDCE      0x40
+
+/*
+** Command Register (CR) bits
 */
 #define NE_CR_P0         0x00
 #define NE_CR_P1         0x40
@@ -69,15 +101,10 @@
 #define NE_CR_STP        0x01
 #define NE_CR_STA        0x02
 #define NE_CR_TXP        0x04
-#define NE_CR_RDMA_READ  0x08
-#define NE_CR_RDMA_WRITE 0x10
-#define NE_CR_NODMA      0x20
-
-/*
-** Interrupt Mask Register (IMR, page 0, write at offset 0x0f)
-** Uses the same bit positions as ISR.
-*/
-#define NE_IMR           0x0f
+#define NE_CR_RDMA_PULL  0x08
+#define NE_CR_RDMA_STORE 0x10
+#define NE_CR_RDMA_ABORT 0x20
+#define NE_CR_NODMA     0x20
 
 /*
 ** Interrupt Status Register (ISR) bits
@@ -130,11 +157,11 @@
 ** Hydra board-specific constants
 */
 #define NE8390_NIC_OFFSET     0xffe1
-#define NE8390_ADDRPROM_OFFSET 0xffc0	/* from BoardAddr + $8000 + $7FC0 = $FFC0 */
+#define NE8390_ADDRPROM_OFFSET 0xffc0
 
 #define NE8390_START_PG  0x00
 #define NE8390_STOP_PG   0x40
-#define NE8390_TX_PAGES  6
+#define NE8390_TX_PAGES  8
 #define NE8390_RX_START_PG (NE8390_START_PG + NE8390_TX_PAGES)
 
 #define NE8390_BOARD_ID 0x08490001	/* manufacturer 0x0849 (2121), product 1 */

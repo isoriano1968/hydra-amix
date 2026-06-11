@@ -59,9 +59,10 @@ int hydra_initialize();
 static int hydraopen(), hydraclose(), hydrawput(), hydrawsrv();
 static void hydraioctl();
 static int hydraproto(), setup_ne2000();
+static void hydra_test_write_reg();
+static void hydra_reset();
 static void receive_interrupt(), transmit_interrupt();
 static void toss_packet_up_stream();
-static void hydra_reset();
 
 static struct module_info hydra_minfo =
 {
@@ -87,6 +88,13 @@ static hydra_board_t hydra_board[HYDRA_MAXBOARDS];
 static hydra_autoconfig_t hydra_autoconfig[HYDRA_MAXBOARDS];
 static int hydra_number_of_boards;
 
+/*
+** NIC_DELAY - ensure minimum chip-select deassertion time between
+** DP8390 register accesses.  The AmigaOS driver reads CIA registers
+** twice for this (CIA access is ~1 us on a standard Amiga).
+*/
+#define NIC_DELAY()	DELAY(5)
+
 static unsigned char
 hydra_inb(nic_base, reg)
 volatile unsigned char *nic_base;
@@ -102,6 +110,78 @@ int reg;
 unsigned char val;
 {
     *(nic_base + (reg * 2)) = val;
+    NIC_DELAY();
+}
+
+static void
+hydra_ram_write_offset(board, buf, len, offset)
+hydra_board_t *board;
+unsigned char *buf;
+int len, offset;
+{
+    volatile unsigned long *dst =
+	(volatile unsigned long *)(board->hydra_info.board_base + offset);
+    int i, nlongs, access_len;
+
+    nlongs = (len + 3) >> 2;
+    access_len = nlongs << 2;
+
+    if (len < 0 || offset < 0 ||
+	offset < (NE8390_START_PG << 8) ||
+	offset + access_len > (NE8390_STOP_PG << 8))
+	return;
+
+    for (i = 0; i < nlongs; i++)
+    {
+	unsigned long v = 0;
+	int j;
+
+	for (j = 0; j < 4; j++)
+	{
+	    int n = (i << 2) + j;
+	    v <<= 8;
+	    if (n < len)
+		v |= buf[n];
+	}
+
+	dst[i] = v;
+    }
+}
+
+static void
+hydra_ram_read_offset(board, buf, len, offset)
+hydra_board_t *board;
+unsigned char *buf;
+int len, offset;
+{
+    volatile unsigned long *src =
+	(volatile unsigned long *)(board->hydra_info.board_base + offset);
+    int i, nlongs, access_len;
+
+    nlongs = (len + 3) >> 2;
+    access_len = nlongs << 2;
+
+    if (len < 0 || offset < 0 ||
+	offset < (NE8390_START_PG << 8) ||
+	offset + access_len > (NE8390_STOP_PG << 8))
+    {
+	for (i = 0; i < len; i++)
+	    buf[i] = 0;
+	return;
+    }
+
+    for (i = 0; i < nlongs; i++)
+    {
+	unsigned long v = src[i];
+	int j;
+
+	for (j = 3; j >= 0; j--)
+	{
+	    int n = (i << 2) + (3 - j);
+	    if (n < len)
+		buf[n] = (unsigned char)((v >> (j << 3)) & 0xff);
+	}
+    }
 }
 
 static void
@@ -110,11 +190,7 @@ hydra_board_t *board;
 unsigned char *buf;
 int len, page;
 {
-    volatile unsigned char *dst = board->hydra_info.board_base + (page << 8);
-    int i;
-
-    for (i = 0; i < len; i++)
-	dst[i] = buf[i];
+    hydra_ram_write_offset(board, buf, len, page << 8);
 }
 
 static void
@@ -123,11 +199,32 @@ hydra_board_t *board;
 unsigned char *buf;
 int len, page;
 {
-    volatile unsigned char *src = board->hydra_info.board_base + (page << 8);
-    int i;
+    hydra_ram_read_offset(board, buf, len, page << 8);
+}
 
-    for (i = 0; i < len; i++)
-	buf[i] = src[i];
+static void
+hydra_test_write_reg(nic, reg, val)
+volatile unsigned char *nic;
+int reg;
+unsigned char val;
+{
+    if (reg < 0 || reg > 0x0f)
+	return;
+
+    if (reg == NE_TBCNT1_W)
+	return;
+
+    /*
+    ** The Hydra board can trap on TBCR1/FIFO access while the NIC is stopped.
+    ** The working SANA-II send path writes TX setup registers while started.
+    */
+    if (reg == NE_TPSR || reg == NE_TBCNT0_W || reg == NE_TBCNT1_W)
+    {
+	hydra_outb(nic, NE_CR, NE_CR_P0 | NE_CR_STA | NE_CR_RDMA_ABORT);
+	NIC_DELAY();
+    }
+
+    hydra_outb(nic, reg, val);
 }
 
 static int
@@ -238,9 +335,12 @@ register queue_t *q;
     if (dev >= HYDRA_MAXDEV)
     {
 	hydra_outb(board->hydra_info.nic_base, NE_CR,
-		   NE_CR_P0 | NE_CR_STP  );
+		   NE_CR_P0 | NE_CR_STP | NE_CR_RDMA_ABORT);
+	NIC_DELAY();
 
 	board->hydra_status.board_state = HYDRA_BOARD_RESET;
+	board->ifstats.ifs_unit = 0;
+	board->ifstats.ifs_active = 0;
 	board->ifstats.ifs_ipackets = 0;
 	board->ifstats.ifs_ierrors = 0;
 	board->ifstats.ifs_opackets = 0;
@@ -316,15 +416,21 @@ mblk_t *mp;
     dl_unitdata_req_t *dp = (dl_unitdata_req_t *)mp->b_rptr;
     unsigned char *ap;
 
-    hydra_outb(nic, NE_CR, NE_CR_P0   | NE_CR_STA);
+    hydra_outb(nic, NE_CR, NE_CR_P0 | NE_CR_STA | NE_CR_RDMA_ABORT);
+    NIC_DELAY();
     if (hydra_inb(nic, NE_CR) & NE_CR_TXP)
+    {
+	NIC_DELAY();
 	return 0;
+    }
+    NIC_DELAY();
 
     pktsize = sizeof(ether_header_t);
     ap = mp->b_rptr + dp->dl_dest_addr_offset;
     bcopy((caddr_t)ap, (caddr_t)&tmp[0], sizeof(ether_addr_t));
     bcopy((caddr_t)info->paddress, (caddr_t)&tmp[6], sizeof(ether_addr_t));
     bcopy((caddr_t)&hp->sap, (caddr_t)&tmp[12], sizeof(hp->sap));
+    board->hydra_status.last_tx_sap = hp->sap;
 
     oldmp = mp;
     n = ETH_MAXDATA;
@@ -345,13 +451,17 @@ mblk_t *mp;
 
     hydra_ram_write(board, tmp, pktsize, info->tx_start_page);
 
-    hydra_outb(nic, NE_CR, NE_CR_P0 | NE_CR_STA);
+    hydra_outb(nic, NE_CR, NE_CR_P0 | NE_CR_STA | NE_CR_RDMA_ABORT);
     hydra_outb(nic, NE_TPSR, info->tx_start_page);
     hydra_outb(nic, NE_TBCNT0, pktsize & 0xff);
     hydra_outb(nic, NE_TBCNT1, (pktsize >> 8) & 0xff);
-    hydra_outb(nic, NE_CR, NE_CR_P0 | NE_CR_TXP | NE_CR_STA);
+    hydra_outb(nic, NE_CR, NE_CR_P0 | NE_CR_TXP | NE_CR_STA | NE_CR_RDMA_ABORT);
 
     board->hydra_status.packets_sent++;
+    if (hp->sap == ETHERTYPE_ARP)
+	board->hydra_status.tx_arp++;
+    if (hp->sap == ETHERTYPE_IP)
+	board->hydra_status.tx_ip++;
     board->ifstats.ifs_opackets++;
 
     return 1;
@@ -368,13 +478,89 @@ mblk_t *mp;
 
     if (mp->b_datap->db_type == M_IOCDATA)
     {
-	if (((struct copyresp *)mp->b_rptr)->cp_rval)
+	struct copyresp *cp = (struct copyresp *)mp->b_rptr;
+	if (cp->cp_rval)
 	{
 	    freemsg(mp);
 	    return;
 	}
 
-	if (!((struct copyresp *)mp->b_rptr)->cp_private)
+	if (cp->cp_private)
+	{
+	    caddr_t user_addr = (caddr_t)cp->cp_private;
+	    hydra_test_t *t = (hydra_test_t *)mp->b_cont->b_rptr;
+	    volatile unsigned char *nic = board->hydra_info.nic_base;
+	    int s;
+
+	    s = splhydra();
+
+	    switch (t->op)
+	    {
+	    case HYDRA_TEST_READ_REG:
+		if (t->reg == NE_FIFO)
+		    t->val = 0;
+		else
+		    t->val = hydra_inb(nic, t->reg);
+		break;
+
+	    case HYDRA_TEST_WRITE_REG:
+		hydra_test_write_reg(nic, t->reg, t->val);
+		break;
+
+	    case HYDRA_TEST_READ_RAM:
+		if (t->len >= 0 && t->len <= sizeof(t->data) &&
+		    (t->page << 8) + t->len < NE8390_STOP_PG * 256)
+		    hydra_ram_read(board, t->data, t->len, t->page);
+		break;
+
+	    case HYDRA_TEST_WRITE_RAM:
+		if (t->len >= 0 && t->len <= sizeof(t->data) &&
+		    (t->page << 8) + t->len < NE8390_STOP_PG * 256)
+		    hydra_ram_write(board, t->data, t->len, t->page);
+		break;
+
+	    case HYDRA_TEST_GET_STATE:
+		/*
+		** Do not touch live NIC registers here.  Hydra boards can bus
+		** trap around the FIFO/TBCR1 slot, and diagnostics must not be
+		** able to panic the kernel by requesting a register snapshot.
+		*/
+		t->tsr = 0;
+		t->isr = 0;
+		t->rsr = 0;
+		t->ncr = 0;
+		t->tcr = 0;
+		t->rcr = 0;
+		t->curr = 0;
+		t->bnry = 0;
+		break;
+
+	    case HYDRA_TEST_TX:
+		break;
+
+	    case HYDRA_TEST_GET_BOARD:
+		t->page = (int)board->hydra_info.board_base;
+		bcopy((caddr_t)board->hydra_info.paddress, (caddr_t)t->data, 6);
+		t->data[6] = board->hydra_status.board_state;
+		break;
+	    }
+
+	    splx(s);
+
+	    {
+		struct copyreq *creq = (struct copyreq *)mp->b_rptr;
+		mp->b_datap->db_type = M_COPYOUT;
+		mp->b_wptr = mp->b_rptr + sizeof(struct copyreq);
+		creq->cq_addr = user_addr;
+		creq->cq_size = sizeof(hydra_test_t);
+		creq->cq_flag = 0;
+		creq->cq_private = 0;
+		putnext(RD(q), mp);
+	    }
+	    return;
+	}
+
+	if (!cp->cp_private)
 	{
 	    mp->b_datap->db_type = M_IOCACK;
 	    freemsg(unlinkb(mp));
@@ -442,7 +628,7 @@ mblk_t *mp;
 	cfg.board_base = (long)board->hydra_info.board_base;
 	cfg.board_debug = board->hydra_status.board_debug;
 	bcopy((caddr_t)board->hydra_info.paddress, (caddr_t)cfg.paddress, 6);
-	cfg.laddress[0] = 0;
+	bzero((caddr_t)cfg.laddress, sizeof(cfg.laddress));
 	cfg.mode = 0;
 	cfg.flags = 0;
 
@@ -478,6 +664,172 @@ mblk_t *mp;
 	    iocbp->ioc_count = sizeof(hydra_config_t);
 	    mp->b_datap->db_type = M_IOCACK;
 	}
+	putnext(RD(q), mp);
+	return;
+    }
+
+    case HYDRA_GET_STATUS:
+    {
+	hydra_status_t status;
+	caddr_t arg = *(caddr_t *)mp->b_cont->b_rptr;
+	int i;
+
+	status = board->hydra_status;
+	status.open_streams = 0;
+	status.bound_streams = 0;
+	status.arp_streams = 0;
+	status.ip_streams = 0;
+	for (i = 0; i < HYDRA_MAXDEV; i++)
+	{
+	    if (board->hydra[i].q)
+	    {
+		status.open_streams++;
+		if (board->hydra[i].sap)
+		    status.bound_streams++;
+		if (board->hydra[i].sap == ETHERTYPE_ARP)
+		    status.arp_streams++;
+		if (board->hydra[i].sap == ETHERTYPE_IP)
+		    status.ip_streams++;
+	    }
+	}
+	status.if_active = board->ifstats.ifs_active;
+	status.if_ipackets = board->ifstats.ifs_ipackets;
+	status.if_opackets = board->ifstats.ifs_opackets;
+	status.if_ierrors = board->ifstats.ifs_ierrors;
+	status.if_oerrors = board->ifstats.ifs_oerrors;
+	status.sw_next_pkt = board->hydra_info.next_pkt;
+
+	freemsg(mp->b_cont);
+
+	mp->b_cont = allocb(sizeof(hydra_status_t), BPRI_MED);
+	if (!mp->b_cont)
+	{
+	    mp->b_datap->db_type = M_IOCNAK;
+	    freemsg(unlinkb(mp));
+	    iocbp->ioc_count = 0;
+	    iocbp->ioc_rval = 0;
+	    iocbp->ioc_error = ENOMEM;
+	    putnext(RD(q), mp);
+	    return;
+	}
+
+	*(hydra_status_t *)mp->b_cont->b_rptr = status;
+	mp->b_cont->b_wptr += sizeof(hydra_status_t);
+
+	if (iocbp->ioc_count == TRANSPARENT)
+	{
+	    struct copyreq *creq = (struct copyreq *)mp->b_rptr;
+	    mp->b_datap->db_type = M_COPYOUT;
+	    creq->cq_addr = arg;
+	    mp->b_wptr = mp->b_rptr + sizeof *creq;
+	    creq->cq_size = sizeof(hydra_status_t);
+	    creq->cq_flag = 0;
+	    creq->cq_private = (mblk_t *)0;
+	}
+	else
+	{
+	    iocbp->ioc_count = sizeof(hydra_status_t);
+	    mp->b_datap->db_type = M_IOCACK;
+	}
+	putnext(RD(q), mp);
+	return;
+    }
+
+    case HYDRA_IOCTL_TEST:
+    {
+	hydra_test_t *t;
+	volatile unsigned char *nic;
+	int s;
+
+	if (iocbp->ioc_count == TRANSPARENT)
+	{
+	    struct copyreq *creq = (struct copyreq *)mp->b_rptr;
+	    caddr_t arg = *(caddr_t *)mp->b_cont->b_rptr;
+
+	    freemsg(mp->b_cont);
+
+	    mp->b_cont = allocb(sizeof(hydra_test_t), BPRI_MED);
+	    if (!mp->b_cont)
+	    {
+		mp->b_datap->db_type = M_IOCNAK;
+		freemsg(unlinkb(mp));
+		iocbp->ioc_count = 0;
+		iocbp->ioc_rval = 0;
+		iocbp->ioc_error = ENOMEM;
+		putnext(RD(q), mp);
+		return;
+	    }
+
+	    mp->b_datap->db_type = M_COPYIN;
+	    mp->b_wptr = mp->b_rptr + sizeof(struct copyreq);
+	    creq->cq_addr = arg;
+	    creq->cq_size = sizeof(hydra_test_t);
+	    creq->cq_flag = 0;
+	    creq->cq_private = (mblk_t *)arg;
+	    putnext(RD(q), mp);
+	    return;
+	}
+
+	t = (hydra_test_t *)mp->b_cont->b_rptr;
+	nic = board->hydra_info.nic_base;
+
+	s = splhydra();
+
+	switch (t->op)
+	{
+	case HYDRA_TEST_READ_REG:
+	    if (t->reg == NE_FIFO)
+		t->val = 0;
+	    else
+		t->val = hydra_inb(nic, t->reg);
+	    break;
+
+	case HYDRA_TEST_WRITE_REG:
+	    hydra_test_write_reg(nic, t->reg, t->val);
+	    break;
+
+	case HYDRA_TEST_READ_RAM:
+	    if (t->len >= 0 && t->len <= sizeof(t->data) &&
+		(t->page << 8) + t->len < NE8390_STOP_PG * 256)
+		hydra_ram_read(board, t->data, t->len, t->page);
+	    break;
+
+	case HYDRA_TEST_WRITE_RAM:
+	    if (t->len >= 0 && t->len <= sizeof(t->data) &&
+		(t->page << 8) + t->len < NE8390_STOP_PG * 256)
+		hydra_ram_write(board, t->data, t->len, t->page);
+	    break;
+
+	case HYDRA_TEST_GET_STATE:
+	    /*
+	    ** Do not touch live NIC registers here.  Hydra boards can bus
+	    ** trap around the FIFO/TBCR1 slot, and diagnostics must not be
+	    ** able to panic the kernel by requesting a register snapshot.
+	    */
+	    t->tsr = 0;
+	    t->isr = 0;
+	    t->rsr = 0;
+	    t->ncr = 0;
+	    t->tcr = 0;
+	    t->rcr = 0;
+	    t->curr = 0;
+	    t->bnry = 0;
+	    break;
+
+	case HYDRA_TEST_TX:
+	    break;
+
+	case HYDRA_TEST_GET_BOARD:
+	    t->page = (int)board->hydra_info.board_base;
+	    bcopy((caddr_t)board->hydra_info.paddress, (caddr_t)t->data, 6);
+	    t->data[6] = board->hydra_status.board_state;
+	    break;
+	}
+
+	splx(s);
+
+	iocbp->ioc_count = sizeof(hydra_test_t);
+	mp->b_datap->db_type = M_IOCACK;
 	putnext(RD(q), mp);
 	return;
     }
@@ -545,6 +897,7 @@ mblk_t *mp;
 	    dl_bind_ack_t *ackp;
 
 	    hp->sap = reqp->dl_sap;
+	    board->hydra_status.last_bound_sap = hp->sap;
 	    hp->state = DL_IDLE;
 
 	    freemsg(mp);
@@ -599,7 +952,7 @@ mblk_t *mp;
 	    ackp->dl_qos_range_offset = 0;
 	    ackp->dl_provider_style = DL_STYLE1;
 	    ackp->dl_growth = 0;
-	    if (hp->state != DL_UNATTACHED)
+	    if (hp->state == DL_IDLE)
 	    {
 		ackp->dl_addr_offset = sizeof(dl_info_ack_t);
 		mp->b_wptr += sizeof(dl_info_ack_t);
@@ -686,7 +1039,8 @@ hydraintr()
 	{
 	    volatile unsigned char *nic = board->hydra_info.nic_base;
 
-	    hydra_outb(nic, NE_CR, NE_CR_P0   | NE_CR_STA);
+	hydra_outb(nic, NE_CR, NE_CR_P0 | NE_CR_STA | NE_CR_RDMA_ABORT);
+	    NIC_DELAY();
 	    status = hydra_inb(nic, NE_ISR);
 
 	    if (status == 0)
@@ -694,9 +1048,6 @@ hydraintr()
 
 	    if (status & (NE_ISR_PRX | NE_ISR_RXE | NE_ISR_OVW))
 	    {
-		if (status & NE_ISR_PRX)
-		    receive_interrupt(board_index);
-
 		if (status & NE_ISR_RXE)
 		{
 		    board->hydra_status.rx_errors++;
@@ -711,19 +1062,26 @@ hydraintr()
 
 		hydra_outb(nic, NE_ISR,
 			   status & (NE_ISR_PRX | NE_ISR_RXE | NE_ISR_OVW));
+		NIC_DELAY();
+
+		if (status & NE_ISR_PRX)
+		    receive_interrupt(board_index);
 	    }
 
 	    if (status & NE_ISR_PTX)
 	    {
 		hydra_outb(nic, NE_ISR, NE_ISR_PTX);
+		NIC_DELAY();
 		transmit_interrupt(board_index);
 	    }
 
 	    if (status & NE_ISR_TXE)
 	    {
 		unsigned char tsr;
-		tsr = hydra_inb(nic, NE_TSR);
 		hydra_outb(nic, NE_ISR, NE_ISR_TXE);
+		NIC_DELAY();
+		tsr = hydra_inb(nic, NE_TSR);
+		NIC_DELAY();
 		board->hydra_status.tx_errors++;
 		board->ifstats.ifs_oerrors++;
 		if (tsr & NE_TSR_COL)
@@ -739,6 +1097,7 @@ hydraintr()
 	    if (status & NE_ISR_CNT)
 	    {
 		hydra_outb(nic, NE_ISR, NE_ISR_CNT);
+		NIC_DELAY();
 		board->hydra_status.missed_packets += hydra_inb(nic, NE_CNTR0);
 	    }
 	}
@@ -756,15 +1115,29 @@ int board_index;
     int curr, boundary, pktsize;
     unsigned char rsr;
     int next_frame;
+    int loop_count = 0;
 
-    hydra_outb(nic, NE_CR, NE_CR_P0   | NE_CR_STA);
+    hydra_outb(nic, NE_CR, NE_CR_P0 | NE_CR_STA | NE_CR_RDMA_ABORT);
+    NIC_DELAY();
 
     while (1)
     {
-	hydra_outb(nic, NE_CR, NE_CR_P1 | NE_CR_STA);
+	if (++loop_count > 256)
+	{
+	    board->hydra_status.rx_errors++;
+	    break;
+	}
+
+	hydra_outb(nic, NE_CR, NE_CR_P1 | NE_CR_STA | NE_CR_RDMA_ABORT);
+	NIC_DELAY();
 	curr = hydra_inb(nic, NE_CURR);
-	hydra_outb(nic, NE_CR, NE_CR_P0   | NE_CR_STA);
+	NIC_DELAY();
+	hydra_outb(nic, NE_CR, NE_CR_P0 | NE_CR_STA | NE_CR_RDMA_ABORT);
+	NIC_DELAY();
 	boundary = hydra_inb(nic, NE_BNRY);
+	NIC_DELAY();
+	board->hydra_status.last_curr = curr;
+	board->hydra_status.last_bnry = boundary;
 
 	next_frame = info->next_pkt;
 
@@ -773,16 +1146,39 @@ int board_index;
 
 	{
 	    unsigned char header[4];
-	    hydra_ram_read(board, header, 4, next_frame);
+	    int header_page = next_frame;
 
-	    rsr = header[0];
-	    next_frame = header[1];
+	    hydra_ram_read(board, header, 4, header_page);
+
+	    board->hydra_status.last_ring_page = header_page;
+	    board->hydra_status.last_ring_next = header[0];
+	    board->hydra_status.last_ring_rsr = header[1];
+	    board->hydra_status.last_ring_size =
+		((unsigned int)header[3] << 8) | header[2];
+
+	    next_frame = header[0];
+	    rsr = header[1];
 	    pktsize = ((unsigned int)header[3] << 8) | header[2];
+	}
+
+	if (next_frame < NE8390_RX_START_PG || next_frame >= NE8390_STOP_PG)
+	{
+	    board->hydra_status.rx_errors++;
+	    board->hydra_status.buffer_error++;
+	    board->hydra_status.rx_bad_next++;
+	    board->ifstats.ifs_ierrors++;
+	    info->next_pkt = NE8390_RX_START_PG;
+	    {
+		hydra_outb(nic, NE_BNRY, NE8390_RX_START_PG);
+		NIC_DELAY();
+	    }
+	    break;
 	}
 
 	if (!(rsr & NE_RSR_PRX))
 	{
 	    board->hydra_status.rx_errors++;
+	    board->hydra_status.rx_bad_rsr++;
 	    board->ifstats.ifs_ierrors++;
 	    info->next_pkt = next_frame;
 	    {
@@ -790,21 +1186,24 @@ int board_index;
 		if (bnry < NE8390_RX_START_PG)
 		    bnry = NE8390_STOP_PG - 1;
 		hydra_outb(nic, NE_BNRY, bnry);
+		NIC_DELAY();
 	    }
 	    continue;
 	}
 
 	pktsize -= 4;
 
-	if (pktsize < ETH_MINPACKET || pktsize > MAX_BUFFER_LENGTH)
+	if (pktsize < ETH_MINFRAME || pktsize > MAX_BUFFER_LENGTH)
 	{
 	    board->hydra_status.buffer_error++;
+	    board->hydra_status.rx_bad_size++;
 	    info->next_pkt = next_frame;
 	    {
 		int bnry = next_frame - 1;
 		if (bnry < NE8390_RX_START_PG)
 		    bnry = NE8390_STOP_PG - 1;
 		hydra_outb(nic, NE_BNRY, bnry);
+		NIC_DELAY();
 	    }
 	    continue;
 	}
@@ -816,25 +1215,13 @@ int board_index;
 	    if (offset + pktsize > stop)
 	    {
 		int semi = stop - offset;
-		volatile unsigned char *src;
-		int i;
-
-		src = board->hydra_info.board_base + offset;
-		for (i = 0; i < semi; i++)
-		    rxbuff[i] = src[i];
-
-		src = board->hydra_info.board_base + (info->rx_start_page << 8);
-		for (i = 0; i < pktsize - semi; i++)
-		    rxbuff[semi + i] = src[i];
+		hydra_ram_read_offset(board, rxbuff, semi, offset);
+		hydra_ram_read_offset(board, rxbuff + semi,
+				      pktsize - semi,
+				      info->rx_start_page << 8);
 	    }
 	    else
-	    {
-		volatile unsigned char *src = board->hydra_info.board_base + offset;
-		int i;
-
-		for (i = 0; i < pktsize; i++)
-		    rxbuff[i] = src[i];
-	    }
+		hydra_ram_read_offset(board, rxbuff, pktsize, offset);
 	}
 
 	board->hydra_status.packets_received++;
@@ -853,6 +1240,7 @@ int board_index;
 	    if (bnry < NE8390_RX_START_PG)
 		bnry = NE8390_STOP_PG - 1;
 	    hydra_outb(nic, NE_BNRY, bnry);
+	    NIC_DELAY();
 	}
 
 	toss_packet_up_stream(rxbuff, board_index, pktsize);
@@ -875,6 +1263,11 @@ int board_index, count;
     ether_header_t *packet_header = (ether_header_t *)packet;
 
     sap = packet_header->ether_type;
+    board->hydra_status.last_rx_sap = sap;
+    if (sap == ETHERTYPE_ARP)
+	board->hydra_status.rx_arp_seen++;
+    if (sap == ETHERTYPE_IP)
+	board->hydra_status.rx_ip_seen++;
 
     if (sap >= ETHERTYPE_TRAIL &&
 	sap <= (unsigned short)(ETHERTYPE_TRAIL + ETHERTYPE_NTRAILER))
@@ -888,9 +1281,12 @@ int board_index, count;
     }
     else
     {
-	length = count - ETH_CRC_LEN;
+	length = count - sizeof(ether_header_t);
 	trailn = 0;
     }
+
+    {
+	int sap_matched = 0;
 
     for (j = 0; j < HYDRA_MAXDEV; j++, hp++)
     {
@@ -928,13 +1324,18 @@ int board_index, count;
 	}
 	else if (hp->sap == sap)
 	{
+	    sap_matched = 1;
+
 	    if (bcmp((char *)packet_header->ether_dhost,
 		     (char *)info->paddress,
 		     sizeof(ether_addr_t)) &&
 		bcmp((char *)packet_header->ether_dhost,
 		     (char *)broadcast_address,
 		     sizeof(broadcast_address)))
+	    {
+		board->hydra_status.rx_not_for_us++;
 		continue;
+	    }
 
 	    if (canput(hp->q->q_next))
 	    {
@@ -967,6 +1368,17 @@ int board_index, count;
 
 		    mp->b_datap->db_type = M_PROTO;
 
+		    if (trailn)
+		    {
+			bcopy((caddr_t)
+			      &packet[sizeof(ether_header_t) + length +
+				      ETH_TYPE_SIZE + ETH_LENGTH_SIZE],
+			      (caddr_t)mp->b_cont->b_wptr,
+			      trailn);
+
+			mp->b_cont->b_wptr += trailn;
+		    }
+
 		    bcopy((caddr_t)&packet[sizeof(ether_header_t)],
 			  (caddr_t)mp->b_cont->b_wptr,
 			  length);
@@ -975,6 +1387,11 @@ int board_index, count;
 		    mp->b_cont->b_datap->db_type = M_DATA;
 
 		    putnext(hp->q, mp);
+		    board->hydra_status.rx_delivered++;
+		    if (sap == ETHERTYPE_ARP)
+			board->hydra_status.rx_arp_delivered++;
+		    if (sap == ETHERTYPE_IP)
+			board->hydra_status.rx_ip_delivered++;
 		}
 		else
 		{
@@ -986,6 +1403,10 @@ int board_index, count;
 	    else
 		board->hydra_status.couldnt_put++;
 	}
+    }
+
+    if (!sap_matched)
+	board->hydra_status.rx_no_sap++;
     }
 }
 
@@ -1026,8 +1447,11 @@ unsigned char physical_ethernet_address[6];
 
     /* Stop NIC before PROM access (required by Hydra hardware) */
     hydra_outb(nic, NE_CR, NE_CR_STP | NE_CR_NODMA);
+    NIC_DELAY();
     hydra_outb(nic, NE_IMR, 0);
+    NIC_DELAY();
     hydra_outb(nic, NE_ISR, 0xFF);
+    NIC_DELAY();
 
     /* Method 1: read MAC from PROM at $FFC0 step-2 */
     {
@@ -1049,14 +1473,19 @@ unsigned char physical_ethernet_address[6];
 	if (physical_ethernet_address[j] != physical_ethernet_address[0]) break;
     if (j == 6) valid = 0;
 
-    if (!valid)
-    {
-	/* Method 2: fallback — read MAC from DP8390 PAR registers (page 1) */
-	hydra_outb(nic, NE_CR, NE_CR_P1 | NE_CR_NODMA);
-	for (j = 0; j < 6; j++)
-	    physical_ethernet_address[j] = hydra_inb(nic, NE_PAR0 + j);
-	hydra_outb(nic, NE_CR, NE_CR_NODMA);
-    }
+	if (!valid)
+	{
+	    /* Method 2: fallback ? read MAC from DP8390 PAR registers (page 1) */
+	    hydra_outb(nic, NE_CR, NE_CR_P1 | NE_CR_NODMA);
+	    NIC_DELAY();
+	    for (j = 0; j < 6; j++)
+	    {
+		physical_ethernet_address[j] = hydra_inb(nic, NE_PAR0 + j);
+		NIC_DELAY();
+	    }
+	    hydra_outb(nic, NE_CR, NE_CR_NODMA);
+	    NIC_DELAY();
+	}
 }
 
 /* AutoConfig nibble decode helpers */
@@ -1273,34 +1702,55 @@ unsigned char ethernet_address[6];
     info->tx_start_page = NE8390_START_PG;
     info->rx_start_page = NE8390_RX_START_PG;
     info->stop_page = NE8390_STOP_PG;
-    info->next_pkt = NE8390_RX_START_PG;
+    info->next_pkt = NE8390_RX_START_PG + 1;
 
     hydra_reset(board_index);
 
-    hydra_outb(nic, NE_CR, NE_CR_P0 | NE_CR_STP);
+    hydra_outb(nic, NE_CR, NE_CR_P0 | NE_CR_STP | NE_CR_RDMA_ABORT);
     DELAY(10);
+    NIC_DELAY();
 
-    hydra_outb(nic, NE_DCR, NE_DCR_BOS | NE_DCR_FT1);
+    hydra_outb(nic, NE_DCR, NE_DCR_WTS | NE_DCR_BOS | NE_DCR_LS | NE_DCR_FT0);
+    NIC_DELAY();
 
     hydra_outb(nic, NE_RBCNT0, 0);
     hydra_outb(nic, NE_RBCNT1, 0);
+    NIC_DELAY();
 
     hydra_outb(nic, NE_PSTART, info->rx_start_page);
     hydra_outb(nic, NE_PSTOP, info->stop_page);
-    hydra_outb(nic, NE_BNRY, info->stop_page - 1);
+    hydra_outb(nic, NE_BNRY, info->rx_start_page);
+    NIC_DELAY();
 
     hydra_outb(nic, NE_ISR, 0xff);
+    NIC_DELAY();
 
-    hydra_outb(nic, NE_CR, NE_CR_P1 | NE_CR_STP);
+    hydra_outb(nic, NE_CR, NE_CR_P1 | NE_CR_STP | NE_CR_RDMA_ABORT);
+    NIC_DELAY();
     for (i = 0; i < 6; i++)
+    {
 	hydra_outb(nic, NE_PAR0 + i, ethernet_address[i]);
+	NIC_DELAY();
+    }
     for (i = 0; i < 8; i++)
+    {
 	hydra_outb(nic, NE_MAR0 + i, 0);
-    hydra_outb(nic, NE_CURR, info->rx_start_page);
+	NIC_DELAY();
+    }
+    hydra_outb(nic, NE_CURR, info->rx_start_page + 1);
+    NIC_DELAY();
 
-    hydra_outb(nic, NE_CR, NE_CR_P0 | NE_CR_STA);
-    hydra_outb(nic, NE_IMR, 0x1f);  /* enable PRX, PTX, RXE, TXE, OVW */
-    hydra_outb(nic, NE_CR, NE_CR_P0 | NE_CR_STA);
+    hydra_outb(nic, NE_CR, NE_CR_P0 | NE_CR_STA | NE_CR_RDMA_ABORT);
+    NIC_DELAY();
+
+    hydra_outb(nic, NE_TCR, NE_TCR_NORMAL);
+    NIC_DELAY();
+
+    hydra_outb(nic, NE_RCR, NE_RCR_AB | NE_RCR_AM);
+    NIC_DELAY();
+
+    hydra_outb(nic, NE_IMR, NE_IMR_PRXE | NE_IMR_PTXE | NE_IMR_RXEE | NE_IMR_TXEE | NE_IMR_OVWE | NE_IMR_CNTE);
+    NIC_DELAY();
 
     board->hydra_status.board_state = HYDRA_BOARD_RUNNING;
     board->hydra_status.packets_sent = 0;
@@ -1319,6 +1769,28 @@ unsigned char ethernet_address[6];
     board->hydra_status.late_collisions = 0;
     board->hydra_status.loss_of_carrier = 0;
     board->hydra_status.retry_errors = 0;
+    board->hydra_status.rx_delivered = 0;
+    board->hydra_status.rx_no_sap = 0;
+    board->hydra_status.rx_not_for_us = 0;
+    board->hydra_status.last_rx_sap = 0;
+    board->hydra_status.last_bound_sap = 0;
+    board->hydra_status.tx_arp = 0;
+    board->hydra_status.tx_ip = 0;
+    board->hydra_status.rx_arp_delivered = 0;
+    board->hydra_status.rx_ip_delivered = 0;
+    board->hydra_status.last_tx_sap = 0;
+    board->hydra_status.rx_arp_seen = 0;
+    board->hydra_status.rx_ip_seen = 0;
+    board->hydra_status.sw_next_pkt = info->next_pkt;
+    board->hydra_status.last_ring_page = 0;
+    board->hydra_status.last_ring_next = 0;
+    board->hydra_status.last_ring_rsr = 0;
+    board->hydra_status.last_ring_size = 0;
+    board->hydra_status.last_curr = 0;
+    board->hydra_status.last_bnry = 0;
+    board->hydra_status.rx_bad_next = 0;
+    board->hydra_status.rx_bad_rsr = 0;
+    board->hydra_status.rx_bad_size = 0;
 
     return 1;
 }
@@ -1331,7 +1803,7 @@ int board_index;
     volatile unsigned char *nic = board->hydra_info.nic_base;
     int i;
 
-    hydra_outb(nic, NE_CR, NE_CR_P0 | NE_CR_STP  );
+    hydra_outb(nic, NE_CR, NE_CR_P0 | NE_CR_STP | NE_CR_RDMA_ABORT);
     for (i = 0; i < 100; i++)
     {
 	DELAY(1);

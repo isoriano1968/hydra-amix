@@ -28,6 +28,9 @@
 #define ETH_MAXPACKET       (ETH_HEADER_SIZE + ETH_MAXDATA)
 #define ETH_MINDATA         50
 #define ETH_MINPACKET       (ETH_HEADER_SIZE + ETH_MINDATA)
+#define ETH_MINFRAME        (ETH_MINPACKET - ETH_CRC_LEN)
+#define ETHERTYPE_IP        0x0800
+#define ETHERTYPE_ARP       0x0806
 
 typedef u_char ether_addr_t[6];
 
