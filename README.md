@@ -87,7 +87,7 @@ The driver is a STREAMS DLPI provider (`struct streamtab hydrainfo`) registered 
 
 ### Prerequisites
 
-- **AMIX 2.1p2** installed on an Amiga (A3000/A4000) with development system
+- **AMIX 2.1p2** installed on an Amiga (A2500/A3000 (support of AMIX on A4000 via z3660(030emu) is currently in the works)  with development system
 - **Native GCC 2.7.2.3** for AMIX (not included; download from [amigaunix.com](https://amigaunix.com) as pkg format)
 
 ### Kernel build
